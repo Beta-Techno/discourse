@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8
+    container_name: discourse-mysql-prod
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DB}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - discourse-network
+
+  mcp-http:
+    build:
+      context: ../../../
+      dockerfile: services/mcp/mcp-http/Dockerfile
+    container_name: discourse-mcp-http-prod
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      MAX_HTTP_BYTES: ${MAX_HTTP_BYTES}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - discourse-network
+
+  agent-service:
+    build:
+      context: ../../../
+      dockerfile: apps/agent-service/Dockerfile
+    container_name: discourse-agent-service-prod
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DB: ${MYSQL_DB}
+      MCP_HTTP_URL: http://mcp-http:3000
+      ALLOWED_TOOLS: ${ALLOWED_TOOLS}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      MAX_HTTP_BYTES: ${MAX_HTTP_BYTES}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mcp-http:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - discourse-network
+
+  discord-bot:
+    build:
+      context: ../../../
+      dockerfile: apps/discord-bot/Dockerfile
+    container_name: discourse-discord-bot-prod
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_APP_ID: ${DISCORD_APP_ID}
+      GUILD_ID: ${GUILD_ID}
+      REGISTER_COMMANDS: false
+      API_BASE_URL: http://agent-service:8080
+    depends_on:
+      agent-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - discourse-network
+
+volumes:
+  mysql-data:
+
+networks:
+  discourse-network:
+    driver: bridge

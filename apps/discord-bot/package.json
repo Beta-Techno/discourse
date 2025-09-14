@@ -1,0 +1,24 @@
+{
+  "name": "@discourse/discord-bot",
+  "version": "0.1.0",
+  "description": "Discord bot for Discourse AI assistant",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx --preload ./polyfills.preload.js watch src/index.ts",
+    "start": "node -r ./polyfills.preload.js dist/index.js",
+    "clean": "rm -rf dist",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@discourse/core": "file:../../packages/core",
+    "discord.js": "^14.14.1",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0"
+  }
+}
