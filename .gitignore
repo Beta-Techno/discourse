@@ -4,6 +4,7 @@ dist
 .env
 **/.env
 *.env
+mcp.servers.json
 *.log
 coverage
 .turbo

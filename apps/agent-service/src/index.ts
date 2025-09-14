@@ -7,8 +7,9 @@ import { ConfigSchema, createLogger } from '@discourse/core';
 import { createDatabaseConnection } from './database/connection.js';
 import { createRunsRouter } from './routes/runs.js';
 import { OpenAIService } from './services/openai-service.js';
-import { MCPClient } from './services/mcp-client.js';
+import { MCPClient } from './services/mcp-client.js'; // legacy HTTP-only tool (kept)
 import { DiscordService } from './services/discord-service.js';
+import { McpBroker } from './mcp/broker.js';
 
 // Load environment variables from project root
 config({ path: '../../.env' });
@@ -27,8 +28,10 @@ async function startServer() {
     logger.info('Database connected successfully');
 
     // Initialize services
-    const mcpClient = new MCPClient(config_);
-    const openaiService = new OpenAIService(config_, mcpClient);
+    const mcpClient = new MCPClient(config_); // legacy HTTP shim
+    const broker = new McpBroker(config_);
+    await broker.start();
+    const openaiService = new OpenAIService(config_, mcpClient, broker);
     const discordService = new DiscordService(config_);
 
     // Check MCP service health
@@ -82,6 +85,11 @@ async function startServer() {
 
     // API routes
     app.use('/runs', createRunsRouter(config_, db, openaiService, discordService));
+
+    // MCP introspection (non-auth, dev only)
+    app.get('/mcp/tools', (req, res) => {
+      res.json({ tools: broker.listFQNs() });
+    });
 
     // Error handling middleware
     app.use((error: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

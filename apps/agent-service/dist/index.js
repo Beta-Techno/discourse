@@ -14,6 +14,7 @@ const runs_js_1 = require("./routes/runs.js");
 const openai_service_js_1 = require("./services/openai-service.js");
 const mcp_client_js_1 = require("./services/mcp-client.js");
 const discord_service_js_1 = require("./services/discord-service.js");
+const broker_js_1 = require("./mcp/broker.js");
 (0, dotenv_1.config)({ path: '../../.env' });
 const config_ = core_1.ConfigSchema.parse(process.env);
 const logger = (0, core_1.createLogger)(config_);
@@ -24,7 +25,9 @@ async function startServer() {
         await db.run((0, drizzle_orm_1.sql) `SELECT 1`);
         logger.info('Database connected successfully');
         const mcpClient = new mcp_client_js_1.MCPClient(config_);
-        const openaiService = new openai_service_js_1.OpenAIService(config_, mcpClient);
+        const broker = new broker_js_1.McpBroker(config_);
+        await broker.start();
+        const openaiService = new openai_service_js_1.OpenAIService(config_, mcpClient, broker);
         const discordService = new discord_service_js_1.DiscordService(config_);
         const mcpHealthy = await mcpClient.isHealthy();
         if (!mcpHealthy) {
@@ -65,6 +68,9 @@ async function startServer() {
             }
         });
         app.use('/runs', (0, runs_js_1.createRunsRouter)(config_, db, openaiService, discordService));
+        app.get('/mcp/tools', (req, res) => {
+            res.json({ tools: broker.listFQNs() });
+        });
         app.use((error, req, res, next) => {
             logger.error({ error, path: req.path, method: req.method }, 'Unhandled error');
             res.status(500).json({

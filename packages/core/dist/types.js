@@ -73,6 +73,8 @@ exports.ConfigSchema = zod_1.z.object({
     DATABASE_PATH: zod_1.z.string().default('./data/discourse.db'),
     API_BASE_URL: zod_1.z.string().url().default('http://agent-service:8080'),
     MCP_HTTP_URL: zod_1.z.string().url().default('http://mcp-http:3000'),
+    MCP_SERVERS_CONFIG: zod_1.z.string().default('./mcp.servers.json'),
+    MCP_ALLOWED_TOOLS: zod_1.z.string().default('*'),
     LOG_LEVEL: zod_1.z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     NODE_ENV: zod_1.z.enum(['development', 'production', 'test']).default('development'),
     REPLY_MODE: zod_1.z.enum(['inline', 'thread', 'auto']).default('inline'),

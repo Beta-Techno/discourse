@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx --preload ./polyfills.preload.js watch src/index.ts",
+    "dev": "tsx --require ./polyfills.preload.js --watch src/index.ts",
     "start": "node -r ./polyfills.preload.js dist/index.js",
     "clean": "rm -rf dist",
     "type-check": "tsc --noEmit"

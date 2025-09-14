@@ -9,12 +9,14 @@ const core_1 = require("@discourse/core");
 class OpenAIService {
     client;
     mcpClient;
+    broker;
     config;
     logger;
-    constructor(config, mcpClient) {
+    constructor(config, mcpClient, broker) {
         this.config = config;
         this.client = new openai_1.default({ apiKey: config.OPENAI_API_KEY });
         this.mcpClient = mcpClient;
+        this.broker = broker;
         this.logger = (0, core_1.createLogger)(config);
     }
     getAvailableTools() {
@@ -38,6 +40,8 @@ class OpenAIService {
                 },
             });
         }
+        const allowed = this.config.MCP_ALLOWED_TOOLS.split(',').map(s => s.trim()).filter(Boolean);
+        tools.push(...this.broker.getOpenAIFunctionTools(allowed.length ? allowed : ['*']));
         return tools;
     }
     async processRequest(prompt, runId) {
@@ -50,11 +54,18 @@ class OpenAIService {
 You can help users with:
 - Answering questions and providing information
 - Fetching and summarizing content from allowlisted websites
+- Using MCP tools discovered at runtime (e.g., database, filesystem, fetch/cURL) via function calls
 - General assistance and conversation
 
 When you need to fetch information from the web, use the http_get tool with allowlisted URLs only. Be concise but helpful in your responses.
 
-If a user asks you to fetch a URL that's not allowlisted, explain that you can only access allowlisted domains for security reasons.`;
+If a user asks you to fetch a URL that's not allowlisted, explain that you can only access allowlisted domains for security reasons.
+
+When a user's request likely needs a tool:
+- Prefer using a relevant MCP function tool first (schema-aware).
+- For unknown parameters, ask for clarification or infer conservative defaults.
+- Keep queries read-only and include LIMITs for data queries.
+`;
             const messages = [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: prompt },
@@ -81,7 +92,8 @@ If a user asks you to fetch a URL that's not allowlisted, explain that you can o
                     tool_calls: toolCalls,
                 });
                 for (const toolCall of toolCalls) {
-                    if (toolCall.function.name === 'http_get') {
+                    const fname = toolCall.function.name;
+                    if (fname === 'http_get') {
                         try {
                             const args = JSON.parse(toolCall.function.arguments);
                             const result = await this.mcpClient.httpGet(args.url);
@@ -95,6 +107,28 @@ If a user asks you to fetch a URL that's not allowlisted, explain that you can o
                         }
                         catch (error) {
                             this.logger.error({ runId, error }, 'HTTP GET tool call failed');
+                            messages.push({
+                                role: 'tool',
+                                content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                                tool_call_id: toolCall.id,
+                            });
+                        }
+                    }
+                    else if (fname.startsWith('mcp__')) {
+                        try {
+                            const parsed = JSON.parse(toolCall.function.arguments || '{}');
+                            const argsJson = typeof parsed.args === 'string' ? parsed.args : JSON.stringify(parsed);
+                            const result = await this.broker.callByOpenAiName(fname, argsJson);
+                            toolsUsed.push(`mcp:${fname}`);
+                            messages.push({
+                                role: 'tool',
+                                content: JSON.stringify(result),
+                                tool_call_id: toolCall.id,
+                            });
+                            this.logger.info({ runId, tool: fname }, 'MCP tool call completed');
+                        }
+                        catch (error) {
+                            this.logger.error({ runId, error, tool: fname }, 'MCP tool call failed');
                             messages.push({
                                 role: 'tool',
                                 content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,

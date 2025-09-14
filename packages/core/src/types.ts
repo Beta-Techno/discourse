@@ -105,6 +105,8 @@ export const ConfigSchema = z.object({
   // Service URLs
   API_BASE_URL: z.string().url().default('http://agent-service:8080'),
   MCP_HTTP_URL: z.string().url().default('http://mcp-http:3000'),
+  MCP_SERVERS_CONFIG: z.string().default('./mcp.servers.json'),
+  MCP_ALLOWED_TOOLS: z.string().default('*'),
   
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),

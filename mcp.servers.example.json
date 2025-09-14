@@ -1,0 +1,13 @@
+[
+  {
+    "name": "pg",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "postgres-mcp", "--dsn", "postgres://discourse_ro:***@postgres:5432/app"]
+  },
+  {
+    "name": "fetch",
+    "transport": "http",
+    "url": "https://your-fetch-mcp.example.com/mcp"
+  }
+]
