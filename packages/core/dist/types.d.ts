@@ -51,16 +51,22 @@ export declare const CreateRunRequestSchema: z.ZodObject<{
     userId: z.ZodString;
     channelId: z.ZodString;
     threadId: z.ZodOptional<z.ZodString>;
+    replyToMessageId: z.ZodOptional<z.ZodString>;
+    replyMode: z.ZodOptional<z.ZodEnum<["inline", "thread", "auto"]>>;
 }, "strip", z.ZodTypeAny, {
     prompt: string;
     userId: string;
     channelId: string;
     threadId?: string | undefined;
+    replyToMessageId?: string | undefined;
+    replyMode?: "inline" | "thread" | "auto" | undefined;
 }, {
     prompt: string;
     userId: string;
     channelId: string;
     threadId?: string | undefined;
+    replyToMessageId?: string | undefined;
+    replyMode?: "inline" | "thread" | "auto" | undefined;
 }>;
 export declare const CreateRunResponseSchema: z.ZodObject<{
     id: z.ZodString;
@@ -218,6 +224,9 @@ export declare const ConfigSchema: z.ZodObject<{
     MCP_HTTP_URL: z.ZodDefault<z.ZodString>;
     LOG_LEVEL: z.ZodDefault<z.ZodEnum<["fatal", "error", "warn", "info", "debug", "trace"]>>;
     NODE_ENV: z.ZodDefault<z.ZodEnum<["development", "production", "test"]>>;
+    REPLY_MODE: z.ZodDefault<z.ZodEnum<["inline", "thread", "auto"]>>;
+    MENTION_TRIGGER_ENABLED: z.ZodDefault<z.ZodEffects<z.ZodString, boolean, string>>;
+    AUTO_THREAD_THRESHOLD: z.ZodDefault<z.ZodEffects<z.ZodString, number, string>>;
 }, "strip", z.ZodTypeAny, {
     DISCORD_TOKEN: string;
     DISCORD_APP_ID: string;
@@ -232,6 +241,9 @@ export declare const ConfigSchema: z.ZodObject<{
     MCP_HTTP_URL: string;
     LOG_LEVEL: "error" | "fatal" | "warn" | "info" | "debug" | "trace";
     NODE_ENV: "development" | "production" | "test";
+    REPLY_MODE: "inline" | "thread" | "auto";
+    MENTION_TRIGGER_ENABLED: boolean;
+    AUTO_THREAD_THRESHOLD: number;
 }, {
     DISCORD_TOKEN: string;
     DISCORD_APP_ID: string;
@@ -246,6 +258,9 @@ export declare const ConfigSchema: z.ZodObject<{
     MCP_HTTP_URL?: string | undefined;
     LOG_LEVEL?: "error" | "fatal" | "warn" | "info" | "debug" | "trace" | undefined;
     NODE_ENV?: "development" | "production" | "test" | undefined;
+    REPLY_MODE?: "inline" | "thread" | "auto" | undefined;
+    MENTION_TRIGGER_ENABLED?: string | undefined;
+    AUTO_THREAD_THRESHOLD?: string | undefined;
 }>;
 export type Config = z.infer<typeof ConfigSchema>;
 //# sourceMappingURL=types.d.ts.map

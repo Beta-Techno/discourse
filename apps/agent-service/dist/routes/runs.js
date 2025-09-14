@@ -9,12 +9,14 @@ const schema_js_1 = require("../database/schema.js");
 function createRunsRouter(config, db, openaiService, discordService) {
     const router = (0, express_1.Router)();
     const logger = (0, core_1.createLogger)(config);
-    router.post('/runs', async (req, res) => {
+    router.post('/', async (req, res) => {
         const runId = (0, uuid_1.v4)();
         const startTime = Date.now();
+        const defaultMode = config.REPLY_MODE;
+        const autoThreshold = config.AUTO_THREAD_THRESHOLD;
         try {
             const requestData = core_1.CreateRunRequestSchema.parse(req.body);
-            const { prompt, userId, channelId, threadId } = requestData;
+            const { prompt, userId, channelId, threadId, replyToMessageId, replyMode } = requestData;
             logger.info({ runId, userId, channelId, promptLength: prompt.length }, 'Processing run request');
             const runRecord = await db.insert(schema_js_1.runs).values({
                 discord_id: userId,
@@ -26,28 +28,33 @@ function createRunsRouter(config, db, openaiService, discordService) {
                 error: null,
                 latency_ms: null,
             });
-            let finalThreadId = threadId;
+            let finalThreadId = threadId ?? null;
             let finalMessage = '';
             try {
                 const result = await openaiService.processRequest(prompt, runId);
                 finalMessage = result.message;
-                if (!finalThreadId) {
+                const toolsUsed = result.toolsUsed ?? [];
+                const mode = replyMode ?? defaultMode;
+                const shouldThread = mode === 'thread' ||
+                    (mode === 'auto' && (finalMessage.length > autoThreshold || toolsUsed.length > 0));
+                if (shouldThread) {
                     const threadName = `AI Response - ${new Date().toLocaleDateString()}`;
                     finalThreadId = await discordService.createThread(channelId, threadName, finalMessage);
                 }
                 else {
-                    await discordService.sendMessage(finalThreadId, finalMessage);
+                    await discordService.sendReply(channelId, replyToMessageId ?? null, finalMessage);
+                    finalThreadId = channelId;
                 }
                 const latency = Date.now() - startTime;
                 await db.update(schema_js_1.runs)
                     .set({
                     thread_id: finalThreadId,
-                    tools_used: result.toolsUsed,
+                    tools_used: toolsUsed,
                     status: 'ok',
                     latency_ms: latency,
                 })
                     .where((0, drizzle_orm_1.eq)(schema_js_1.runs.id, Number(runRecord.lastInsertRowid)));
-                logger.info({ runId, latency, toolsUsed: result.toolsUsed }, 'Run completed successfully');
+                logger.info({ runId, latency, toolsUsed }, 'Run completed successfully');
                 const response = {
                     id: runId,
                     threadId: finalThreadId,
@@ -67,12 +74,14 @@ function createRunsRouter(config, db, openaiService, discordService) {
                     .where((0, drizzle_orm_1.eq)(schema_js_1.runs.id, Number(runRecord.lastInsertRowid)));
                 logger.error({ runId, latency, error: processingError }, 'Run processing failed');
                 const errorResponse = `❌ I encountered an error processing your request: ${errorMessage}`;
-                if (!finalThreadId) {
+                const mode = replyMode ?? defaultMode;
+                if (mode === 'thread' || (!replyToMessageId && mode !== 'inline')) {
                     const threadName = `AI Error - ${new Date().toLocaleDateString()}`;
                     finalThreadId = await discordService.createThread(channelId, threadName, errorResponse);
                 }
                 else {
-                    await discordService.sendMessage(finalThreadId, errorResponse);
+                    await discordService.sendReply(channelId, replyToMessageId ?? null, errorResponse);
+                    finalThreadId = channelId;
                 }
                 const response = {
                     id: runId,

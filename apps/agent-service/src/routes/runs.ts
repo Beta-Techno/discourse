@@ -21,11 +21,13 @@ export function createRunsRouter(
   router.post('/', async (req, res) => {
     const runId = uuidv4();
     const startTime = Date.now();
+    const defaultMode = config.REPLY_MODE; // 'inline' | 'thread' | 'auto'
+    const autoThreshold = config.AUTO_THREAD_THRESHOLD;
     
     try {
       // Validate request
       const requestData = CreateRunRequestSchema.parse(req.body);
-      const { prompt, userId, channelId, threadId } = requestData;
+      const { prompt, userId, channelId, threadId, replyToMessageId, replyMode } = requestData;
 
       logger.info({ runId, userId, channelId, promptLength: prompt.length }, 'Processing run request');
 
@@ -41,21 +43,28 @@ export function createRunsRouter(
         latency_ms: null,
       });
 
-      let finalThreadId = threadId;
+      let finalThreadId = threadId ?? null;
       let finalMessage = '';
 
       try {
         // Process with OpenAI
         const result = await openaiService.processRequest(prompt, runId);
         finalMessage = result.message;
+        const toolsUsed = result.toolsUsed ?? [];
 
-        // Create thread if not provided
-        if (!finalThreadId) {
+        // Decide how to deliver (inline vs thread)
+        const mode = replyMode ?? defaultMode;
+        const shouldThread =
+          mode === 'thread' ||
+          (mode === 'auto' && (finalMessage.length > autoThreshold || toolsUsed.length > 0));
+
+        if (shouldThread) {
           const threadName = `AI Response - ${new Date().toLocaleDateString()}`;
           finalThreadId = await discordService.createThread(channelId, threadName, finalMessage);
         } else {
-          // Send message to existing thread
-          await discordService.sendMessage(finalThreadId, finalMessage);
+          await discordService.sendReply(channelId, replyToMessageId ?? null, finalMessage);
+          // For compatibility with existing bot UI, return base channel id
+          finalThreadId = channelId;
         }
 
         // Update run record with success
@@ -63,13 +72,13 @@ export function createRunsRouter(
         await db.update(runs)
           .set({
             thread_id: finalThreadId,
-            tools_used: result.toolsUsed,
+            tools_used: toolsUsed,
             status: 'ok',
             latency_ms: latency,
           })
           .where(eq(runs.id, Number(runRecord.lastInsertRowid)));
 
-        logger.info({ runId, latency, toolsUsed: result.toolsUsed }, 'Run completed successfully');
+        logger.info({ runId, latency, toolsUsed }, 'Run completed successfully');
 
         const response: CreateRunResponse = {
           id: runId,
@@ -96,12 +105,13 @@ export function createRunsRouter(
 
         // Send error message to Discord
         const errorResponse = `❌ I encountered an error processing your request: ${errorMessage}`;
-        
-        if (!finalThreadId) {
+        const mode = replyMode ?? defaultMode;
+        if (mode === 'thread' || (!replyToMessageId && mode !== 'inline')) {
           const threadName = `AI Error - ${new Date().toLocaleDateString()}`;
           finalThreadId = await discordService.createThread(channelId, threadName, errorResponse);
         } else {
-          await discordService.sendMessage(finalThreadId, errorResponse);
+          await discordService.sendReply(channelId, replyToMessageId ?? null, errorResponse);
+          finalThreadId = channelId;
         }
 
         const response: CreateRunResponse = {

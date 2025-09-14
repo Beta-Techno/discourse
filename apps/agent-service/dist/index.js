@@ -34,7 +34,7 @@ async function startServer() {
             logger.info('MCP service is healthy');
         }
         const app = (0, express_1.default)();
-        const port = process.env.PORT || 8080;
+        const port = process.env.PORT || 8081;
         app.use((0, helmet_1.default)());
         app.use((0, cors_1.default)());
         app.use(express_1.default.json({ limit: '10mb' }));

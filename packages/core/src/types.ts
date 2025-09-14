@@ -26,6 +26,10 @@ export const CreateRunRequestSchema = z.object({
   userId: z.string().max(32),
   channelId: z.string().max(32),
   threadId: z.string().max(32).optional(),
+  // New: reply inline to a specific message (when triggered by @mention)
+  replyToMessageId: z.string().max(32).optional(),
+  // New: per-request override (falls back to config)
+  replyMode: z.enum(['inline','thread','auto']).optional(),
 });
 
 export const CreateRunResponseSchema = z.object({
@@ -105,6 +109,11 @@ export const ConfigSchema = z.object({
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  // New reply behavior
+  REPLY_MODE: z.enum(['inline','thread','auto']).default('inline'),
+  MENTION_TRIGGER_ENABLED: z.string().transform(v => v === 'true').default('true'),
+  AUTO_THREAD_THRESHOLD: z.string().transform(Number).default('1500'),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

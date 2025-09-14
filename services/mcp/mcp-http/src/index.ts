@@ -25,6 +25,12 @@ const allowedHosts = config_.ALLOWED_HOSTS.split(',').map(host => host.trim());
 function isUrlAllowed(url: string): boolean {
   try {
     const urlObj = new URL(url);
+    
+    // Allow all domains if ALLOWED_HOSTS contains "*" or is empty
+    if (allowedHosts.includes('*') || allowedHosts.length === 0 || allowedHosts[0] === '') {
+      return true;
+    }
+    
     return allowedHosts.some(host => 
       urlObj.hostname === host || 
       urlObj.hostname.endsWith(`.${host}`)
@@ -69,6 +75,7 @@ app.post('/tools/http.get', async (req, res) => {
     const response = await axios.get(url, {
       timeout: 10000, // 10 second timeout
       maxRedirects: 3,
+      maxContentLength: 100000, // 100KB limit (increased from 10KB)
       headers: {
         'User-Agent': 'Discourse-AI/1.0 (Safe Web Browser)',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -77,7 +84,6 @@ app.post('/tools/http.get', async (req, res) => {
         'Connection': 'keep-alive',
       },
       responseType: 'text',
-      maxContentLength: max_bytes,
     });
 
     // Extract content

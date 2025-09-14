@@ -24,6 +24,8 @@ exports.CreateRunRequestSchema = zod_1.z.object({
     userId: zod_1.z.string().max(32),
     channelId: zod_1.z.string().max(32),
     threadId: zod_1.z.string().max(32).optional(),
+    replyToMessageId: zod_1.z.string().max(32).optional(),
+    replyMode: zod_1.z.enum(['inline', 'thread', 'auto']).optional(),
 });
 exports.CreateRunResponseSchema = zod_1.z.object({
     id: zod_1.z.string(),
@@ -73,5 +75,8 @@ exports.ConfigSchema = zod_1.z.object({
     MCP_HTTP_URL: zod_1.z.string().url().default('http://mcp-http:3000'),
     LOG_LEVEL: zod_1.z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     NODE_ENV: zod_1.z.enum(['development', 'production', 'test']).default('development'),
+    REPLY_MODE: zod_1.z.enum(['inline', 'thread', 'auto']).default('inline'),
+    MENTION_TRIGGER_ENABLED: zod_1.z.string().transform(v => v === 'true').default('true'),
+    AUTO_THREAD_THRESHOLD: zod_1.z.string().transform(Number).default('1500'),
 });
 //# sourceMappingURL=types.js.map

@@ -90,6 +90,55 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
+// --- New: @mention trigger in base channels ---
+client.on('messageCreate', async (message) => {
+  try {
+    // Ignore DMs, system messages, bots (including ourselves)
+    if (!message.inGuild() || message.author.bot) return;
+    if (!config_.MENTION_TRIGGER_ENABLED) return;
+    if (!client.user) return;
+
+    // Fire only when the bot is mentioned
+    const mentioned = message.mentions.users.has(client.user.id);
+    if (!mentioned) return;
+
+    // Strip bot mention(s) from the content
+    const raw = message.content ?? '';
+    const botMentionA = `<@${client.user.id}>`;
+    const botMentionB = `<@!${client.user.id}>`;
+    const prompt = raw.replaceAll(botMentionA, '').replaceAll(botMentionB, '').trim();
+    if (!prompt) return; // empty after stripping
+
+    // Lightweight acknowledgement: typing + a reaction
+    void message.channel.sendTyping();
+    try { await message.react('🧠'); } catch {}
+
+    // Build run request - inline reply to the triggering message
+    const runRequest = {
+      prompt,
+      userId: message.author.id,
+      channelId: message.channel.id,
+      replyToMessageId: message.id,
+      replyMode: config_.REPLY_MODE, // 'inline' | 'thread' | 'auto'
+    };
+
+    // Validate shape (defense-in-depth)
+    CreateRunRequestSchema.parse(runRequest);
+
+    // Call agent to process; agent will post the response into the channel/reply
+    await axios.post<CreateRunResponse>(`${config_.API_BASE_URL}/runs`, runRequest, {
+      timeout: 30000,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    try { await message.react('✅'); } catch {}
+  } catch (err) {
+    // Best-effort error surface; keep noise low
+    try { await message.react('❌'); } catch {}
+    logger.error({ err }, 'mention-trigger failed');
+  }
+});
+
 async function handleAskCommand(interaction: any) {
   const prompt = interaction.options.getString('prompt', true);
   const userId = interaction.user.id;
@@ -121,9 +170,9 @@ async function handleAskCommand(interaction: any) {
     const { id: runId, threadId, message } = response.data;
 
     // Update the deferred reply with success message
-    await interaction.editReply({
-      content: `✅ Run ${runId} complete → <#${threadId}>`,
-    });
+    // In inline mode there's no thread; we link back to the channel instead
+    const target = config_.REPLY_MODE === 'thread' ? `<#${threadId}>` : `<#${channelId}>`;
+    await interaction.editReply(`✅ Run ${runId} complete → ${target}`);
 
     logger.info({
       runId,

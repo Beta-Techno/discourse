@@ -37,6 +37,12 @@
       "@discourse/core/*": ["./packages/core/src/*"]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+  "include": [],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./apps/discord-bot" },
+    { "path": "./apps/agent-service" },
+    { "path": "./services/mcp/mcp-http" }
+  ]
 }

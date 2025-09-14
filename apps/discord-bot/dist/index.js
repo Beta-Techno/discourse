@@ -72,6 +72,53 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 });
+client.on('messageCreate', async (message) => {
+    try {
+        if (!message.inGuild() || message.author.bot)
+            return;
+        if (!config_.MENTION_TRIGGER_ENABLED)
+            return;
+        if (!client.user)
+            return;
+        const mentioned = message.mentions.users.has(client.user.id);
+        if (!mentioned)
+            return;
+        const raw = message.content ?? '';
+        const botMentionA = `<@${client.user.id}>`;
+        const botMentionB = `<@!${client.user.id}>`;
+        const prompt = raw.replaceAll(botMentionA, '').replaceAll(botMentionB, '').trim();
+        if (!prompt)
+            return;
+        void message.channel.sendTyping();
+        try {
+            await message.react('🧠');
+        }
+        catch { }
+        const runRequest = {
+            prompt,
+            userId: message.author.id,
+            channelId: message.channel.id,
+            replyToMessageId: message.id,
+            replyMode: config_.REPLY_MODE,
+        };
+        core_1.CreateRunRequestSchema.parse(runRequest);
+        await axios_1.default.post(`${config_.API_BASE_URL}/runs`, runRequest, {
+            timeout: 30000,
+            headers: { 'Content-Type': 'application/json' },
+        });
+        try {
+            await message.react('✅');
+        }
+        catch { }
+    }
+    catch (err) {
+        try {
+            await message.react('❌');
+        }
+        catch { }
+        logger.error({ err }, 'mention-trigger failed');
+    }
+});
 async function handleAskCommand(interaction) {
     const prompt = interaction.options.getString('prompt', true);
     const userId = interaction.user.id;
@@ -90,9 +137,8 @@ async function handleAskCommand(interaction) {
             },
         });
         const { id: runId, threadId, message } = response.data;
-        await interaction.editReply({
-            content: `✅ Run ${runId} complete → <#${threadId}>`,
-        });
+        const target = config_.REPLY_MODE === 'thread' ? `<#${threadId}>` : `<#${channelId}>`;
+        await interaction.editReply(`✅ Run ${runId} complete → ${target}`);
         logger.info({
             runId,
             userId,
