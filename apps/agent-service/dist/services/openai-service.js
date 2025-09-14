@@ -31,15 +31,21 @@ class OpenAIService {
 You can help users with:
 - Answering questions and providing information
 - Fetching and summarizing content from any website using MCP tools
+- Querying PostgreSQL databases with read-only access using MCP tools
 - Using MCP tools discovered at runtime (e.g., database, filesystem, fetch/cURL) via function calls
 - General assistance and conversation
 
-When you need to fetch information from the web, use the MCP fetch tools (mcp__fetch__fetch) which can access any website. Be concise but helpful in your responses.
+When you need to fetch information from the web, use the MCP fetch tools (mcp__fetch__fetch) which can access any website.
+
+When you need to query a database, use the MCP PostgreSQL tools (mcp__postgres__*) which provide safe, read-only access to PostgreSQL databases.
+
+Be concise but helpful in your responses.
 
 When a user's request likely needs a tool:
 - Prefer using a relevant MCP function tool first (schema-aware).
 - For unknown parameters, ask for clarification or infer conservative defaults.
 - Keep queries read-only and include LIMITs for data queries.
+- For database queries, always use LIMIT clauses to prevent large result sets.
 `;
             const messages = [
                 { role: 'system', content: systemPrompt },
@@ -59,11 +65,15 @@ When a user's request likely needs a tool:
             const completion = await this.client.chat.completions.create(requestParams);
             let finalMessage = completion.choices[0]?.message?.content || 'I apologize, but I was unable to generate a response.';
             const toolCalls = completion.choices[0]?.message?.tool_calls || [];
-            if (toolCalls.length > 0) {
-                this.logger.info({ runId, toolCallCount: toolCalls.length }, 'Processing tool calls');
+            let currentCompletion = completion;
+            let roundCount = 0;
+            const maxRounds = 5;
+            while (currentCompletion.choices[0]?.message?.tool_calls && roundCount < maxRounds) {
+                const toolCalls = currentCompletion.choices[0]?.message?.tool_calls || [];
+                this.logger.info({ runId, toolCallCount: toolCalls.length, round: roundCount + 1 }, 'Processing tool calls');
                 messages.push({
                     role: 'assistant',
-                    content: completion.choices[0]?.message?.content || null,
+                    content: currentCompletion.choices[0]?.message?.content || null,
                     tool_calls: toolCalls,
                 });
                 for (const toolCall of toolCalls) {
@@ -91,14 +101,15 @@ When a user's request likely needs a tool:
                         }
                     }
                 }
-                const finalCompletion = await this.client.chat.completions.create({
+                currentCompletion = await this.client.chat.completions.create({
                     model: 'gpt-4o-mini',
                     messages,
                     temperature: 0.7,
                     max_tokens: 2000,
                 });
-                finalMessage = finalCompletion.choices[0]?.message?.content || finalMessage;
+                roundCount++;
             }
+            finalMessage = currentCompletion.choices[0]?.message?.content || finalMessage;
             const latency = Date.now() - startTime;
             this.logger.info({ runId, latency, toolsUsed }, 'OpenAI request completed');
             return {

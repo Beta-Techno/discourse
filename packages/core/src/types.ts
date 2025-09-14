@@ -102,6 +102,9 @@ export const ConfigSchema = z.object({
   MCP_SERVERS_CONFIG: z.string().default('./mcp.servers.json'),
   MCP_ALLOWED_TOOLS: z.string().default('*'),
   
+  // PostgreSQL Configuration (for MCP server)
+  POSTGRES_URI: z.string().url().optional(),
+  
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

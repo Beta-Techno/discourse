@@ -123,6 +123,11 @@ export class McpBroker {
       throw new Error('Invalid JSON in "args"');
     }
 
+    // Debug logging for SQL queries
+    if (tool === 'execute_sql' && args.query) {
+      this.logger.info({ tool, query: args.query }, 'Executing SQL query');
+    }
+
     const res = await client.callTool({ name: tool, arguments: args });
 
     // Normalize content to something we can JSON.stringify
@@ -136,15 +141,34 @@ export class McpBroker {
 
   // ---------------- private helpers ----------------
 
+  private substituteEnvVars(env: Record<string, string>): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env)) {
+      result[key] = value.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+        const envValue = process.env[varName];
+        if (envValue === undefined) {
+          this.logger.warn({ varName, key }, 'Environment variable not found, using empty string');
+          return '';
+        }
+        return envValue;
+      });
+    }
+    return result;
+  }
+
   private async connectServer(srv: McpServerConfig) {
     let transport: any;
 
     if (srv.transport === 'stdio') {
       if (!srv.command) throw new Error('stdio transport requires "command"');
+      
+      // Substitute environment variables in env values
+      const substitutedEnv = this.substituteEnvVars(srv.env ?? {});
+      
       transport = new StdioClientTransport({
         command: srv.command,
         args: srv.args ?? [],
-        env: { ...process.env, ...(srv.env ?? {}) } as Record<string, string>
+        env: { ...process.env, ...substitutedEnv } as Record<string, string>
       });
     } else if (srv.transport === 'http') {
       if (!srv.url) throw new Error('http transport requires "url"');

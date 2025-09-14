@@ -16,6 +16,10 @@ export function createRunsRouter(
 ): Router {
   const router = Router();
   const logger = createLogger(config);
+  
+  // Simple in-memory deduplication cache
+  const requestCache = new Map<string, { timestamp: number; runId: string }>();
+  const DEDUP_WINDOW_MS = 5000; // 5 seconds
 
   router.post('/', async (req, res) => {
     const runId = uuidv4();
@@ -27,6 +31,31 @@ export function createRunsRouter(
       // Validate request
       const requestData = CreateRunRequestSchema.parse(req.body);
       const { prompt, userId, channelId, threadId, replyToMessageId, replyMode } = requestData;
+
+      // Create deduplication key
+      const dedupKey = `${userId}:${channelId}:${replyToMessageId || 'none'}:${prompt.slice(0, 100)}`;
+      const now = Date.now();
+      
+      // Check for duplicate request
+      const existing = requestCache.get(dedupKey);
+      if (existing && (now - existing.timestamp) < DEDUP_WINDOW_MS) {
+        logger.info({ runId, existingRunId: existing.runId, dedupKey }, 'Duplicate request detected, returning existing run');
+        return res.json({
+          id: existing.runId,
+          threadId: channelId, // Return channel ID for compatibility
+          message: 'Request already being processed'
+        });
+      }
+      
+      // Store this request in cache
+      requestCache.set(dedupKey, { timestamp: now, runId });
+      
+      // Clean up old entries (simple cleanup)
+      for (const [key, value] of requestCache.entries()) {
+        if (now - value.timestamp > DEDUP_WINDOW_MS * 2) {
+          requestCache.delete(key);
+        }
+      }
 
       logger.info({ runId, userId, channelId, promptLength: prompt.length }, 'Processing run request');
 
@@ -79,6 +108,9 @@ export function createRunsRouter(
 
         logger.info({ runId, latency, toolsUsed }, 'Run completed successfully');
 
+        // Clean up deduplication cache
+        requestCache.delete(dedupKey);
+
         const response: CreateRunResponse = {
           id: runId,
           threadId: finalThreadId,
@@ -101,6 +133,9 @@ export function createRunsRouter(
           .where(eq(runs.id, Number(runRecord.lastInsertRowid)));
 
         logger.error({ runId, latency, error: processingError }, 'Run processing failed');
+
+        // Clean up deduplication cache
+        requestCache.delete(dedupKey);
 
         // Send error message to Discord
         const errorResponse = `❌ I encountered an error processing your request: ${errorMessage}`;
@@ -125,6 +160,16 @@ export function createRunsRouter(
     } catch (error) {
       const latency = Date.now() - startTime;
       logger.error({ runId, latency, error }, 'Run request failed');
+
+      // Clean up deduplication cache on any error
+      try {
+        const requestData = CreateRunRequestSchema.parse(req.body);
+        const { userId, channelId, replyToMessageId, prompt } = requestData;
+        const dedupKey = `${userId}:${channelId}:${replyToMessageId || 'none'}:${prompt.slice(0, 100)}`;
+        requestCache.delete(dedupKey);
+      } catch {
+        // Ignore cleanup errors
+      }
 
       if (error instanceof Error && error.name === 'ZodError') {
         res.status(400).json({

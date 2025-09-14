@@ -220,6 +220,7 @@ export declare const ConfigSchema: z.ZodObject<{
     API_BASE_URL: z.ZodDefault<z.ZodString>;
     MCP_SERVERS_CONFIG: z.ZodDefault<z.ZodString>;
     MCP_ALLOWED_TOOLS: z.ZodDefault<z.ZodString>;
+    POSTGRES_URI: z.ZodOptional<z.ZodString>;
     LOG_LEVEL: z.ZodDefault<z.ZodEnum<["fatal", "error", "warn", "info", "debug", "trace"]>>;
     NODE_ENV: z.ZodDefault<z.ZodEnum<["development", "production", "test"]>>;
     REPLY_MODE: z.ZodDefault<z.ZodEnum<["inline", "thread", "auto"]>>;
@@ -240,6 +241,7 @@ export declare const ConfigSchema: z.ZodObject<{
     REPLY_MODE: "inline" | "thread" | "auto";
     MENTION_TRIGGER_ENABLED: boolean;
     AUTO_THREAD_THRESHOLD: number;
+    POSTGRES_URI?: string | undefined;
 }, {
     DISCORD_TOKEN: string;
     DISCORD_APP_ID: string;
@@ -250,6 +252,7 @@ export declare const ConfigSchema: z.ZodObject<{
     API_BASE_URL?: string | undefined;
     MCP_SERVERS_CONFIG?: string | undefined;
     MCP_ALLOWED_TOOLS?: string | undefined;
+    POSTGRES_URI?: string | undefined;
     LOG_LEVEL?: "error" | "fatal" | "warn" | "info" | "debug" | "trace" | undefined;
     NODE_ENV?: "development" | "production" | "test" | undefined;
     REPLY_MODE?: "inline" | "thread" | "auto" | undefined;
