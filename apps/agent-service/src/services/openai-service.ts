@@ -1,52 +1,24 @@
 import OpenAI from 'openai';
 import { Config, OpenAIFunctionTool, createLogger } from '@discourse/core';
-import { MCPClient } from './mcp-client.js';
 import { McpBroker } from '../mcp/broker.js';
 
 export class OpenAIService {
   private client: OpenAI;
-  private mcpClient: MCPClient;
   private broker: McpBroker;
   private config: Config;
   private logger: ReturnType<typeof createLogger>;
 
-  constructor(config: Config, mcpClient: MCPClient, broker: McpBroker) {
+  constructor(config: Config, broker: McpBroker) {
     this.config = config;
     this.client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-    this.mcpClient = mcpClient;
     this.broker = broker;
     this.logger = createLogger(config);
   }
 
   private getAvailableTools(): OpenAIFunctionTool[] {
-    const tools: OpenAIFunctionTool[] = [];
-    
-    // Add HTTP GET tool if allowed (legacy shim)
-    if (this.config.ALLOWED_TOOLS && this.config.ALLOWED_TOOLS.includes('http.get')) {
-      tools.push({
-        type: 'function',
-        function: {
-          name: 'http_get',
-          description: 'Fetch content from an allowlisted URL (read-only). Use this to get current information from websites.',
-          parameters: {
-            type: 'object',
-            properties: {
-              url: {
-                type: 'string',
-                description: 'The URL to fetch. Must be from an allowlisted domain.',
-              },
-            },
-            required: ['url'],
-          },
-        },
-      });
-    }
-
     // Add dynamic tools from MCP servers
     const allowed = this.config.MCP_ALLOWED_TOOLS.split(',').map(s => s.trim()).filter(Boolean);
-    tools.push(...this.broker.getOpenAIFunctionTools(allowed.length ? allowed : ['*']));
-
-    return tools;
+    return this.broker.getOpenAIFunctionTools(allowed.length ? allowed : ['*']);
   }
 
   async processRequest(prompt: string, runId: string): Promise<{
@@ -113,31 +85,7 @@ When a user's request likely needs a tool:
         // Process each tool call
         for (const toolCall of toolCalls) {
           const fname = toolCall.function.name;
-          if (fname === 'http_get') {
-            try {
-              const args = JSON.parse(toolCall.function.arguments);
-              const result = await this.mcpClient.httpGet(args.url);
-              toolsUsed.push('http.get');
-              
-              // Add tool result to messages
-              messages.push({
-                role: 'tool',
-                content: JSON.stringify(result),
-                tool_call_id: toolCall.id,
-              });
-              
-              this.logger.info({ runId, url: args.url }, 'HTTP GET tool call completed');
-            } catch (error) {
-              this.logger.error({ runId, error }, 'HTTP GET tool call failed');
-              
-              // Add error result to messages
-              messages.push({
-                role: 'tool',
-                content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                tool_call_id: toolCall.id,
-              });
-            }
-          } else if (fname.startsWith('mcp__')) {
+          if (fname.startsWith('mcp__')) {
             // Dynamic MCP tools
             try {
               // Our broker expects a single "args" JSON string field in parameters

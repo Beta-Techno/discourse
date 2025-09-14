@@ -5,7 +5,6 @@ import { CreateRunRequestSchema, CreateRunResponse, createLogger } from '@discou
 import { Database } from '../database/connection.js';
 import { runs } from '../database/schema.js';
 import { OpenAIService } from '../services/openai-service.js';
-import { MCPClient } from '../services/mcp-client.js';
 import { DiscordService } from '../services/discord-service.js';
 import { Config } from '@discourse/core';
 

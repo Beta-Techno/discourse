@@ -216,12 +216,8 @@ export declare const ConfigSchema: z.ZodObject<{
     GUILD_ID: z.ZodString;
     REGISTER_COMMANDS: z.ZodDefault<z.ZodEffects<z.ZodString, boolean, string>>;
     OPENAI_API_KEY: z.ZodString;
-    ALLOWED_TOOLS: z.ZodDefault<z.ZodString>;
-    ALLOWED_HOSTS: z.ZodDefault<z.ZodString>;
-    MAX_HTTP_BYTES: z.ZodDefault<z.ZodEffects<z.ZodString, number, string>>;
     DATABASE_PATH: z.ZodDefault<z.ZodString>;
     API_BASE_URL: z.ZodDefault<z.ZodString>;
-    MCP_HTTP_URL: z.ZodDefault<z.ZodString>;
     MCP_SERVERS_CONFIG: z.ZodDefault<z.ZodString>;
     MCP_ALLOWED_TOOLS: z.ZodDefault<z.ZodString>;
     LOG_LEVEL: z.ZodDefault<z.ZodEnum<["fatal", "error", "warn", "info", "debug", "trace"]>>;
@@ -235,12 +231,8 @@ export declare const ConfigSchema: z.ZodObject<{
     GUILD_ID: string;
     REGISTER_COMMANDS: boolean;
     OPENAI_API_KEY: string;
-    ALLOWED_TOOLS: string;
-    ALLOWED_HOSTS: string;
-    MAX_HTTP_BYTES: number;
     DATABASE_PATH: string;
     API_BASE_URL: string;
-    MCP_HTTP_URL: string;
     MCP_SERVERS_CONFIG: string;
     MCP_ALLOWED_TOOLS: string;
     LOG_LEVEL: "error" | "fatal" | "warn" | "info" | "debug" | "trace";
@@ -254,12 +246,8 @@ export declare const ConfigSchema: z.ZodObject<{
     GUILD_ID: string;
     OPENAI_API_KEY: string;
     REGISTER_COMMANDS?: string | undefined;
-    ALLOWED_TOOLS?: string | undefined;
-    ALLOWED_HOSTS?: string | undefined;
-    MAX_HTTP_BYTES?: string | undefined;
     DATABASE_PATH?: string | undefined;
     API_BASE_URL?: string | undefined;
-    MCP_HTTP_URL?: string | undefined;
     MCP_SERVERS_CONFIG?: string | undefined;
     MCP_ALLOWED_TOOLS?: string | undefined;
     LOG_LEVEL?: "error" | "fatal" | "warn" | "info" | "debug" | "trace" | undefined;

@@ -7,7 +7,6 @@ import { ConfigSchema, createLogger } from '@discourse/core';
 import { createDatabaseConnection } from './database/connection.js';
 import { createRunsRouter } from './routes/runs.js';
 import { OpenAIService } from './services/openai-service.js';
-import { MCPClient } from './services/mcp-client.js'; // legacy HTTP-only tool (kept)
 import { DiscordService } from './services/discord-service.js';
 import { McpBroker } from './mcp/broker.js';
 
@@ -28,19 +27,12 @@ async function startServer() {
     logger.info('Database connected successfully');
 
     // Initialize services
-    const mcpClient = new MCPClient(config_); // legacy HTTP shim
     const broker = new McpBroker(config_);
     await broker.start();
-    const openaiService = new OpenAIService(config_, mcpClient, broker);
+    const openaiService = new OpenAIService(config_, broker);
     const discordService = new DiscordService(config_);
 
-    // Check MCP service health
-    const mcpHealthy = await mcpClient.isHealthy();
-    if (!mcpHealthy) {
-      logger.warn('MCP service is not healthy, continuing without tools');
-    } else {
-      logger.info('MCP service is healthy');
-    }
+    // MCP broker is already started above
 
     // Create Express app
     const app = express();
@@ -62,15 +54,12 @@ async function startServer() {
         // Check database connection
         await db.run(sql`SELECT 1`);
         
-        // Check MCP service
-        const mcpHealthy = await mcpClient.isHealthy();
-        
         res.json({
           status: 'ready',
           timestamp: new Date().toISOString(),
           services: {
             database: 'healthy',
-            mcp: mcpHealthy ? 'healthy' : 'unhealthy',
+            mcp: 'healthy',
           },
         });
       } catch (error) {

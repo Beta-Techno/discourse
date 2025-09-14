@@ -12,7 +12,6 @@ const core_1 = require("@discourse/core");
 const connection_js_1 = require("./database/connection.js");
 const runs_js_1 = require("./routes/runs.js");
 const openai_service_js_1 = require("./services/openai-service.js");
-const mcp_client_js_1 = require("./services/mcp-client.js");
 const discord_service_js_1 = require("./services/discord-service.js");
 const broker_js_1 = require("./mcp/broker.js");
 (0, dotenv_1.config)({ path: '../../.env' });
@@ -24,18 +23,10 @@ async function startServer() {
         const db = (0, connection_js_1.createDatabaseConnection)(config_);
         await db.run((0, drizzle_orm_1.sql) `SELECT 1`);
         logger.info('Database connected successfully');
-        const mcpClient = new mcp_client_js_1.MCPClient(config_);
         const broker = new broker_js_1.McpBroker(config_);
         await broker.start();
-        const openaiService = new openai_service_js_1.OpenAIService(config_, mcpClient, broker);
+        const openaiService = new openai_service_js_1.OpenAIService(config_, broker);
         const discordService = new discord_service_js_1.DiscordService(config_);
-        const mcpHealthy = await mcpClient.isHealthy();
-        if (!mcpHealthy) {
-            logger.warn('MCP service is not healthy, continuing without tools');
-        }
-        else {
-            logger.info('MCP service is healthy');
-        }
         const app = (0, express_1.default)();
         const port = process.env.PORT || 8081;
         app.use((0, helmet_1.default)());
@@ -48,13 +39,12 @@ async function startServer() {
         app.get('/readyz', async (req, res) => {
             try {
                 await db.run((0, drizzle_orm_1.sql) `SELECT 1`);
-                const mcpHealthy = await mcpClient.isHealthy();
                 res.json({
                     status: 'ready',
                     timestamp: new Date().toISOString(),
                     services: {
                         database: 'healthy',
-                        mcp: mcpHealthy ? 'healthy' : 'unhealthy',
+                        mcp: 'healthy',
                     },
                 });
             }

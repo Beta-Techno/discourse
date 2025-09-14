@@ -94,17 +94,11 @@ export const ConfigSchema = z.object({
   // OpenAI
   OPENAI_API_KEY: z.string().min(1),
   
-  // Tools
-  ALLOWED_TOOLS: z.string().default('http.get'),
-  ALLOWED_HOSTS: z.string().default('example.com'),
-  MAX_HTTP_BYTES: z.string().transform(Number).default('100000'),
-  
   // Database
   DATABASE_PATH: z.string().default('./data/discourse.db'),
   
   // Service URLs
   API_BASE_URL: z.string().url().default('http://agent-service:8080'),
-  MCP_HTTP_URL: z.string().url().default('http://mcp-http:3000'),
   MCP_SERVERS_CONFIG: z.string().default('./mcp.servers.json'),
   MCP_ALLOWED_TOOLS: z.string().default('*'),
   
