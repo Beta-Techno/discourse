@@ -96,12 +96,24 @@ This means the download worked! The file is saved and you can then read its cont
 For PDF attachments, use the PyMuPDF4LLM MCP server (mcp__pymupdf4llm__convert_pdf_to_markdown) to convert the PDF to Markdown format.
 
 The PyMuPDF4LLM tool will return a JSON response with a "markdown_path" field pointing to the converted file. After getting this response, you MUST:
-1. Use the filesystem MCP server (mcp__filesystem__read_file) to read the file at the markdown_path
-2. Read and analyze the Markdown content from the filesystem response
-3. Extract key information (dates, amounts, names, project details, etc.)
-4. Provide a clear summary to the user
+1. Use the filesystem MCP server (mcp__filesystem__read_file) with the exact path from markdown_path
+2. Call it like: {"path": "/private/tmp/gmail-attachments/converted-invoice.md"}
+3. Read and analyze the Markdown content from the filesystem response
+4. Extract key information (dates, amounts, names, project details, etc.)
+5. Provide a clear summary to the user
 
 CRITICAL: Do not stop after PyMuPDF4LLM conversion. You must use the filesystem tool to read the converted file content.
+
+MANDATORY WORKFLOW FOR PDF ATTACHMENTS:
+1. Download PDF with Gmail MCP
+2. Convert PDF with PyMuPDF4LLM MCP (gets markdown_path)
+3. IMMEDIATELY use filesystem MCP to read the file at markdown_path
+4. Analyze the content and provide summary
+
+DO NOT STOP AT STEP 2. ALWAYS PROCEED TO STEP 3.
+
+EXAMPLE: If PyMuPDF4LLM returns {"markdown_path": "/private/tmp/gmail-attachments/converted-invoice.md"}, 
+then IMMEDIATELY call mcp__filesystem__read_file with {"path": "/private/tmp/gmail-attachments/converted-invoice.md"}
 
 For other file types, you can use the filesystem tool to read local files or the fetch tool for web URLs.
 
