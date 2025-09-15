@@ -123,12 +123,61 @@ export class McpBroker {
       throw new Error('Invalid JSON in "args"');
     }
 
+    // Special handling for Gmail download_attachment to fix filename length issues
+    if (server === 'gmail' && tool === 'download_attachment') {
+      args = this.fixGmailAttachmentDownloadArgs(args);
+    }
+
     // Debug logging for SQL queries
     if (tool === 'execute_sql' && args.query) {
       this.logger.info({ tool, query: args.query }, 'Executing SQL query');
     }
+    
+    // Debug logging for Gmail tools
+    if (server === 'gmail') {
+      this.logger.info({ tool, args }, 'Executing Gmail tool');
+    }
 
     const res = await client.callTool({ name: tool, arguments: args });
+
+    // Debug logging for Gmail tool responses
+    if (server === 'gmail') {
+      this.logger.info({ tool, responseSize: JSON.stringify(res).length }, 'Gmail tool response received');
+      if (res?.content && Array.isArray(res.content)) {
+        this.logger.info({ tool, contentTypes: res.content.map(c => c.type), contentLengths: res.content.map(c => c.text?.length || 0) }, 'Gmail content details');
+        // Log first 200 characters of text content for debugging
+        const textContent = res.content.find(c => c.type === 'text')?.text;
+        if (textContent) {
+          this.logger.info({ tool, preview: textContent.substring(0, 200) }, 'Gmail content preview');
+        }
+      }
+    }
+
+    // Debug logging for PyMuPDF4LLM tool responses
+    if (server === 'pymupdf4llm') {
+      this.logger.info({ tool, responseSize: JSON.stringify(res).length }, 'PyMuPDF4LLM tool response received');
+      if (res?.content && Array.isArray(res.content)) {
+        this.logger.info({ tool, contentTypes: res.content.map(c => c.type), contentLengths: res.content.map(c => c.text?.length || 0) }, 'PyMuPDF4LLM content details');
+        // Log first 500 characters of text content for debugging
+        const textContent = res.content.find(c => c.type === 'text')?.text;
+        if (textContent) {
+          this.logger.info({ tool, preview: textContent.substring(0, 500) }, 'PyMuPDF4LLM content preview');
+        }
+      }
+    }
+
+    // Debug logging for filesystem tool responses
+    if (server === 'filesystem') {
+      this.logger.info({ tool, responseSize: JSON.stringify(res).length }, 'Filesystem tool response received');
+      if (res?.content && Array.isArray(res.content)) {
+        this.logger.info({ tool, contentTypes: res.content.map(c => c.type), contentLengths: res.content.map(c => c.text?.length || 0) }, 'Filesystem content details');
+        // Log first 500 characters of text content for debugging
+        const textContent = res.content.find(c => c.type === 'text')?.text;
+        if (textContent) {
+          this.logger.info({ tool, preview: textContent.substring(0, 500) }, 'Filesystem content preview');
+        }
+      }
+    }
 
     // Normalize content to something we can JSON.stringify
     // SDK typically returns { content: [{ type: 'text', text: '...' }, ...] }
@@ -140,6 +189,68 @@ export class McpBroker {
   }
 
   // ---------------- private helpers ----------------
+
+  private fixGmailAttachmentDownloadArgs(args: any): any {
+    const SAVE_DIR = '/tmp/gmail-attachments';
+    
+    // Ensure the directory exists
+    try {
+      fs.mkdirSync(SAVE_DIR, { recursive: true });
+    } catch (error) {
+      this.logger.warn({ error, saveDir: SAVE_DIR }, 'Failed to create Gmail attachment directory');
+    }
+
+    // If savePath and filename are already provided, use them
+    if (args.savePath && args.filename) {
+      return args;
+    }
+
+    // Generate a safe filename
+    const attachmentId = args.attachmentId || '';
+    const originalName = args.filename || '';
+    const mimeType = args.mimeType || '';
+    
+    // Create a safe filename that won't exceed filesystem limits
+    const safeFilename = this.createSafeFilename(originalName, attachmentId, mimeType);
+    
+    return {
+      ...args,
+      savePath: SAVE_DIR,
+      filename: safeFilename
+    };
+  }
+
+  private createSafeFilename(originalName: string, attachmentId: string, mimeType?: string, maxLength: number = 120): string {
+    // Remove invalid filesystem characters
+    const badChars = /[\/\\:*?"<>|]/g;
+    const sanitized = (originalName || '').replace(badChars, '_');
+    
+    // Parse the filename to get extension
+    const parsed = path.parse(sanitized);
+    const ext = parsed.ext || '';
+    const base = parsed.name || '';
+    
+    // Determine extension from MIME type if available
+    let finalExt = ext;
+    if (!finalExt && mimeType) {
+      if (mimeType.includes('pdf')) finalExt = '.pdf';
+      else if (mimeType.includes('zip')) finalExt = '.zip';
+      else if (mimeType.includes('image')) finalExt = '.jpg';
+      else if (mimeType.includes('text')) finalExt = '.txt';
+    }
+    
+    // Create fallback name from attachment ID
+    const fallbackBase = `attachment-${attachmentId.slice(0, 16)}`;
+    
+    // Use original name if it's reasonable, otherwise use fallback
+    const useBase = base && base.length <= 50 ? base : fallbackBase;
+    
+    // Ensure total length doesn't exceed maxLength
+    const maxBaseLength = Math.max(1, maxLength - finalExt.length);
+    const finalBase = useBase.length > maxBaseLength ? useBase.slice(0, maxBaseLength) : useBase;
+    
+    return `${finalBase}${finalExt}`;
+  }
 
   private substituteEnvVars(env: Record<string, string>): Record<string, string> {
     const result: Record<string, string> = {};
