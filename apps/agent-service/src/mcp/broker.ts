@@ -128,6 +128,9 @@ export class McpBroker {
       args = this.fixGmailAttachmentDownloadArgs(args);
     }
 
+    // Note: Google Workspace MCP handles shared drive access internally
+    // No need to add shared drive flags as the MCP server manages this automatically
+
     // Debug logging for SQL queries
     if (tool === 'execute_sql' && args.query) {
       this.logger.info({ tool, query: args.query }, 'Executing SQL query');
@@ -317,8 +320,9 @@ export class McpBroker {
   }
 
   private toOpenAiFunctionName(server: string, tool: string) {
-    // Keep it simple and collision-safe
-    return `mcp__${server}__${tool}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    // Keep it simple and collision-safe, convert hyphens to underscores for OpenAI compatibility
+    const normalizedServer = server.replace(/-/g, '_');
+    return `mcp__${normalizedServer}__${tool}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
   }
 
   private fromOpenAiFunctionName(fn: string): { server: string; tool: string } {
@@ -326,7 +330,8 @@ export class McpBroker {
     const parts = fn.split('__');
     if (parts.length < 3) throw new Error(`Malformed MCP function name: ${fn}`);
     // Re-join any remaining underscores for tool name
-    const server = parts[1]!;
+    // Convert underscores back to hyphens for server name lookup
+    const server = parts[1]!.replace(/_/g, '-');
     const tool = parts.slice(2).join('__');
     return { server, tool };
   }

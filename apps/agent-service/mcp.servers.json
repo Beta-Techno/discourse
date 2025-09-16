@@ -1,0 +1,50 @@
+[
+  {
+    "name": "fetch",
+    "transport": "stdio",
+    "command": "mcp-server-fetch",
+    "args": ["--ignore-robots-txt"],
+    "env": {
+      "MCP_FETCH_ALLOWED_DOMAINS": "*"
+    }
+  },
+  {
+    "name": "postgres",
+    "transport": "stdio",
+    "command": "postgres-mcp",
+    "args": ["--access-mode=restricted"],
+    "env": {
+      "DATABASE_URI": "${POSTGRES_URI}"
+    }
+  },
+  {
+    "name": "pymupdf4llm",
+    "transport": "stdio",
+    "command": "uvx",
+    "args": ["pymupdf4llm-mcp@latest", "stdio"]
+  },
+  {
+    "name": "filesystem",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "/tmp/gmail-attachments",
+      "/private/tmp/gmail-attachments"
+    ]
+  },
+  {
+    "name": "google-workspace",
+    "transport": "stdio",
+    "command": "uvx",
+    "args": ["workspace-mcp==1.4.7", "--tools", "gmail", "drive", "sheets", "--single-user"],
+    "env": {
+      "GOOGLE_OAUTH_CLIENT_ID": "${GDRIVE_CLIENT_ID}",
+      "GOOGLE_OAUTH_CLIENT_SECRET": "${GDRIVE_CLIENT_SECRET}",
+      "GOOGLE_MCP_CREDENTIALS_DIR": "/Users/damicorobot/.google_workspace_mcp/credentials",
+      "USER_GOOGLE_EMAIL": "robot@damicoconstruction.net",
+      "LOG_LEVEL": "10"
+    }
+  }
+]

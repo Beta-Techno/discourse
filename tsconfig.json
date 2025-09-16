@@ -42,7 +42,6 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./apps/discord-bot" },
-    { "path": "./apps/agent-service" },
-    { "path": "./services/mcp/mcp-http" }
+    { "path": "./apps/agent-service" }
   ]
 }
