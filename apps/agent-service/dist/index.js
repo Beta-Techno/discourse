@@ -11,9 +11,8 @@ const drizzle_orm_1 = require("drizzle-orm");
 const core_1 = require("@discourse/core");
 const connection_js_1 = require("./database/connection.js");
 const runs_js_1 = require("./routes/runs.js");
-const openai_service_js_1 = require("./services/openai-service.js");
-const discord_service_js_1 = require("./services/discord-service.js");
 const broker_js_1 = require("./mcp/broker.js");
+const streams_js_1 = require("./api/streams.js");
 (0, dotenv_1.config)({ path: '../../.env' });
 const config_ = core_1.ConfigSchema.parse(process.env);
 const logger = (0, core_1.createLogger)(config_);
@@ -25,10 +24,8 @@ async function startServer() {
         logger.info('Database connected successfully');
         const broker = new broker_js_1.McpBroker(config_);
         await broker.start();
-        const openaiService = new openai_service_js_1.OpenAIService(config_, broker);
-        const discordService = new discord_service_js_1.DiscordService(config_);
         const app = (0, express_1.default)();
-        const port = process.env.PORT || 8081;
+        const port = Number(process.env.PORT ?? 8080);
         app.use((0, helmet_1.default)());
         app.use((0, cors_1.default)());
         app.use(express_1.default.json({ limit: '10mb' }));
@@ -57,7 +54,8 @@ async function startServer() {
                 });
             }
         });
-        app.use('/runs', (0, runs_js_1.createRunsRouter)(config_, db, openaiService, discordService));
+        app.use('/runs', (0, runs_js_1.createRunsRouter)(config_, db, broker));
+        app.get('/runs/:id/events', streams_js_1.streamRun);
         app.get('/mcp/tools', (req, res) => {
             res.json({ tools: broker.listFQNs() });
         });
@@ -71,9 +69,12 @@ async function startServer() {
         app.use((req, res) => {
             res.status(404).json({ error: 'Not found' });
         });
-        app.listen(port, () => {
+        const server = app.listen(port, () => {
             logger.info({ port }, 'Agent service started successfully');
         });
+        server.requestTimeout = 0;
+        server.headersTimeout = 120_000;
+        server.keepAliveTimeout = 75_000;
         process.on('SIGTERM', () => {
             logger.info('SIGTERM received, shutting down gracefully');
             process.exit(0);

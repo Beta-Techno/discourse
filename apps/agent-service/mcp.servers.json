@@ -8,15 +8,17 @@
       "MCP_FETCH_ALLOWED_DOMAINS": "*"
     }
   },
-  {
-    "name": "postgres",
-    "transport": "stdio",
-    "command": "postgres-mcp",
-    "args": ["--access-mode=restricted"],
-    "env": {
-      "DATABASE_URI": "${POSTGRES_URI}"
-    }
-  },
+    {
+      "name": "postgres",
+      "transport": "stdio",
+      "command": "postgres-mcp",
+      "args": [],
+      "env": {
+        "DATABASE_URI": "${POSTGRES_URI}",
+        "PGSSLMODE": "require",
+        "PGOPTIONS": "-c search_path=public"
+      }
+    },
   {
     "name": "pymupdf4llm",
     "transport": "stdio",
@@ -44,7 +46,9 @@
       "GOOGLE_OAUTH_CLIENT_SECRET": "${GDRIVE_CLIENT_SECRET}",
       "GOOGLE_MCP_CREDENTIALS_DIR": "/Users/damicorobot/.google_workspace_mcp/credentials",
       "USER_GOOGLE_EMAIL": "robot@damicoconstruction.net",
-      "LOG_LEVEL": "10"
+      "LOG_LEVEL": "10",
+      "WORKSPACE_MCP_PORT": "7082",
+      "OAUTHLIB_INSECURE_TRANSPORT": "1"
     }
   }
 ]

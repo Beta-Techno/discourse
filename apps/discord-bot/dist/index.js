@@ -7,6 +7,7 @@ const discord_js_1 = require("discord.js");
 const dotenv_1 = require("dotenv");
 const core_1 = require("@discourse/core");
 const axios_1 = __importDefault(require("axios"));
+const streaming_client_js_1 = require("./streaming-client.js");
 (0, dotenv_1.config)({ path: '../../.env' });
 if (typeof globalThis.ReadableStream !== 'function') {
     throw new Error('ReadableStream is not available; verify preload or Node version.');
@@ -83,6 +84,11 @@ client.on('messageCreate', async (message) => {
         const mentioned = message.mentions.users.has(client.user.id);
         if (!mentioned)
             return;
+        logger.info({
+            userId: message.author.id,
+            channelId: message.channel.id,
+            content: message.content
+        }, 'Bot mentioned, processing request');
         const raw = message.content ?? '';
         const botMentionA = `<@${client.user.id}>`;
         const botMentionB = `<@!${client.user.id}>`;
@@ -96,16 +102,24 @@ client.on('messageCreate', async (message) => {
         catch { }
         const runRequest = {
             prompt,
-            userId: message.author.id,
-            channelId: message.channel.id,
-            replyToMessageId: message.id,
-            replyMode: config_.REPLY_MODE,
+            profileId: 'default',
+            user: {
+                provider: 'discord',
+                id: message.author.id,
+            },
+            context: {
+                channelId: message.channel.id,
+                replyToMessageId: message.id,
+            },
         };
-        core_1.CreateRunRequestSchema.parse(runRequest);
-        await axios_1.default.post(`${config_.API_BASE_URL}/runs`, runRequest, {
+        logger.info({ runRequest }, 'Sending request to agent service');
+        const response = await axios_1.default.post(`${config_.API_BASE_URL}/runs`, runRequest, {
             timeout: 30000,
             headers: { 'Content-Type': 'application/json' },
         });
+        logger.info({ runId: response.data.id }, 'Received run ID from agent service');
+        const { id: runId } = response.data;
+        await handleStreamingResponse(runId, message);
         try {
             await message.react('✅');
         }
@@ -119,37 +133,133 @@ client.on('messageCreate', async (message) => {
         logger.error({ err }, 'mention-trigger failed');
     }
 });
+async function handleStreamingResponse(runId, message) {
+    let currentMessage = null;
+    let messageBuffer = '';
+    let isProcessing = false;
+    let lastSentContent = '';
+    const streamingClient = new streaming_client_js_1.StreamingClient((event) => {
+        logger.info({ eventType: event.type, data: event.data }, 'Received SSE event');
+        switch (event.type) {
+            case 'plan':
+                break;
+            case 'tool_call':
+                if (!isProcessing) {
+                    isProcessing = true;
+                    message.channel.sendTyping();
+                }
+                break;
+            case 'token':
+                messageBuffer += event.data.text;
+                break;
+            case 'message':
+                if (event.data.content) {
+                    sendMessage(event.data.content);
+                    messageBuffer = '';
+                }
+                break;
+            case 'done':
+                sendChunk();
+                streamingClient.disconnect();
+                break;
+            case 'error':
+                sendMessage(`❌ Error: ${event.data.message}`);
+                streamingClient.disconnect();
+                break;
+        }
+    }, (error) => {
+        logger.error({
+            error: error.message,
+            stack: error.stack,
+            runId
+        }, 'Streaming error');
+        sendMessage(`❌ Connection error: ${error.message}`);
+        streamingClient.disconnect();
+    });
+    function sendChunk() {
+        if (messageBuffer) {
+            sendMessage(messageBuffer);
+            messageBuffer = '';
+        }
+    }
+    function sendMessage(content) {
+        if (!content.trim())
+            return;
+        if (content === lastSentContent) {
+            logger.info({ content: content.substring(0, 50) + '...' }, 'Skipping duplicate message');
+            return;
+        }
+        lastSentContent = content;
+        logger.info({ content: content.substring(0, 100) + '...', runId }, 'Sending message to Discord');
+        const replyMode = config_.REPLY_MODE;
+        const autoThreshold = Number(config_.AUTO_THREAD_THRESHOLD ?? 1500);
+        const shouldCreateThread = replyMode === 'thread' ||
+            (replyMode === 'auto' && content.length > autoThreshold);
+        const chunks = splitMessage(content);
+        chunks.forEach((chunk, index) => {
+            if (index === 0 && !currentMessage) {
+                if (shouldCreateThread) {
+                    currentMessage = message.startThread({
+                        name: `AI Response - ${new Date().toLocaleTimeString()}`,
+                        autoArchiveDuration: 60
+                    }).then((thread) => thread.send(chunk));
+                }
+                else {
+                    currentMessage = message.reply(chunk);
+                }
+            }
+            else {
+                message.channel.send(chunk);
+            }
+        });
+    }
+    function splitMessage(content, maxLength = 1900) {
+        if (content.length <= maxLength) {
+            return [content];
+        }
+        const chunks = [];
+        let remaining = content;
+        while (remaining.length > 0) {
+            if (remaining.length <= maxLength) {
+                chunks.push(remaining);
+                break;
+            }
+            let splitPoint = maxLength;
+            const lastNewline = remaining.lastIndexOf('\n', maxLength);
+            if (lastNewline > maxLength * 0.8) {
+                splitPoint = lastNewline;
+            }
+            chunks.push(remaining.substring(0, splitPoint));
+            remaining = remaining.substring(splitPoint);
+        }
+        return chunks;
+    }
+    streamingClient.connect(runId, config_.API_BASE_URL);
+}
 async function handleAskCommand(interaction) {
     const prompt = interaction.options.getString('prompt', true);
-    const userId = interaction.user.id;
-    const channelId = interaction.channelId;
     await interaction.deferReply({ ephemeral: true });
+    const runRequest = {
+        prompt,
+        profileId: 'default',
+        user: { provider: 'discord', id: interaction.user.id },
+        context: { channelId: interaction.channelId }
+    };
     try {
-        const runRequest = core_1.CreateRunRequestSchema.parse({
-            prompt,
-            userId,
-            channelId,
-        });
-        const response = await axios_1.default.post(`${config_.API_BASE_URL}/runs`, runRequest, {
+        const { data } = await axios_1.default.post(`${config_.API_BASE_URL}/runs`, runRequest, {
             timeout: 30000,
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
         });
-        const { id: runId, threadId, message } = response.data;
-        const target = config_.REPLY_MODE === 'thread' ? `<#${threadId}>` : `<#${channelId}>`;
-        await interaction.editReply(`✅ Run ${runId} complete → ${target}`);
-        logger.info({
-            runId,
-            userId,
-            channelId,
-            threadId,
-            promptLength: prompt.length,
-        }, 'Ask command completed successfully');
+        const runId = data.id;
+        await interaction.editReply(`✅ Started run \`${runId}\`. I'll post the answer in this channel.`);
+        const messageLike = {
+            channel: interaction.channel,
+            reply: (content) => interaction.followUp({ content, ephemeral: false }),
+        };
+        await handleStreamingResponse(runId, messageLike);
     }
     catch (error) {
-        logger.error({ userId, channelId, prompt: prompt.substring(0, 100) }, 'Error in ask command:', error);
-        console.error('Full ask command error details:', error);
+        logger.error({ userId: interaction.user.id, channelId: interaction.channelId, prompt: prompt.substring(0, 100) }, 'Error in ask command:', error);
         let errorMessage = 'Sorry, I encountered an error processing your request.';
         if (axios_1.default.isAxiosError(error)) {
             if (error.code === 'ECONNREFUSED') {

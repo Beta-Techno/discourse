@@ -93,13 +93,13 @@ export class McpBroker {
         function: {
           name: openaiName,
           description: def.description ?? `MCP tool ${fqn}`,
-          parameters: {
+          // Prefer the server's actual input schema; fall back to generic
+          parameters: def.inputSchema ?? {
             type: 'object',
             properties: {
               args: {
                 type: 'string',
-                description:
-                  'JSON-encoded object of arguments for this MCP tool. Example: {"foo":"bar"}'
+                description: 'JSON-encoded object of arguments. Example: {"query":"SELECT 1"}'
               }
             },
             required: ['args']
@@ -113,7 +113,12 @@ export class McpBroker {
 
   async callByOpenAiName(openaiFunctionName: string, argsJson: string): Promise<any> {
     const { server, tool } = this.fromOpenAiFunctionName(openaiFunctionName);
-    const client = this.clients.get(server);
+    let client = this.clients.get(server);
+    if (!client) {
+      this.logger.warn({ server }, 'MCP server not connected; attempting reconnect');
+      await this.start(); // re-read config and reconnect all servers
+      client = this.clients.get(server);
+    }
     if (!client) throw new Error(`MCP server not connected: ${server}`);
 
     let args: any = {};
@@ -124,21 +129,28 @@ export class McpBroker {
     }
 
     // Special handling for Gmail download_attachment to fix filename length issues
-    if (server === 'gmail' && tool === 'download_attachment') {
+    // Workspace MCP exposes Gmail tools under the google-workspace server,
+    // with tool names like "gmail.download_attachment"
+    if (server === 'google-workspace' && tool.endsWith('download_attachment')) {
       args = this.fixGmailAttachmentDownloadArgs(args);
     }
 
     // Note: Google Workspace MCP handles shared drive access internally
     // No need to add shared drive flags as the MCP server manages this automatically
 
-    // Debug logging for SQL queries
-    if (tool === 'execute_sql' && args.query) {
-      this.logger.info({ tool, query: args.query }, 'Executing SQL query');
+    // Debug logging for PostgreSQL queries
+    if (server === 'postgres' && args.query) {
+      this.logger.info({ tool, query: args.query }, 'Executing PostgreSQL query');
     }
     
     // Debug logging for Gmail tools
     if (server === 'gmail') {
       this.logger.info({ tool, args }, 'Executing Gmail tool');
+    }
+
+    // Debug logging for fetch tool
+    if (server === 'fetch') {
+      this.logger.info({ tool, args, originalArgsJson: argsJson }, 'Executing fetch tool');
     }
 
     const res = await client.callTool({ name: tool, arguments: args });
@@ -276,13 +288,29 @@ export class McpBroker {
     if (srv.transport === 'stdio') {
       if (!srv.command) throw new Error('stdio transport requires "command"');
       
+      // Guard against missing DSN for postgres
+      if (srv.name === 'postgres') {
+        const hasDsnArg = (srv.args ?? []).some(a => a === '--dsn' || a.startsWith('--dsn='));
+        const envDsn = (srv.env?.DATABASE_URL || srv.env?.DATABASE_URI || '').trim();
+        if (!hasDsnArg && !envDsn) {
+          this.logger.warn({ server: 'postgres' }, 'Skipping postgres MCP: no DSN provided (DATABASE_URL/URI or --dsn).');
+          return;
+        }
+      }
+      
       // Substitute environment variables in env values
       const substitutedEnv = this.substituteEnvVars(srv.env ?? {});
+      
+      // Prevent parent PORT from influencing child servers (especially google-workspace)
+      const baseEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+      if (srv.name === 'google-workspace') {
+        delete baseEnv.PORT;
+      }
       
       transport = new StdioClientTransport({
         command: srv.command,
         args: srv.args ?? [],
-        env: { ...process.env, ...substitutedEnv } as Record<string, string>
+        env: { ...baseEnv, ...substitutedEnv } as Record<string, string>
       });
     } else if (srv.transport === 'http') {
       if (!srv.url) throw new Error('http transport requires "url"');

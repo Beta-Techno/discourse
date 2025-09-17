@@ -6,9 +6,8 @@ import { sql } from 'drizzle-orm';
 import { ConfigSchema, createLogger } from '@discourse/core';
 import { createDatabaseConnection } from './database/connection.js';
 import { createRunsRouter } from './routes/runs.js';
-import { OpenAIService } from './services/openai-service.js';
-import { DiscordService } from './services/discord-service.js';
 import { McpBroker } from './mcp/broker.js';
+import { streamRun } from './api/streams.js';
 
 // Load environment variables from project root
 config({ path: '../../.env' });
@@ -29,14 +28,12 @@ async function startServer() {
     // Initialize services
     const broker = new McpBroker(config_);
     await broker.start();
-    const openaiService = new OpenAIService(config_, broker);
-    const discordService = new DiscordService(config_);
 
     // MCP broker is already started above
 
     // Create Express app
     const app = express();
-    const port = process.env.PORT || 8081;
+    const port = Number(process.env.PORT ?? 8080);
 
     // Middleware
     app.use(helmet());
@@ -73,7 +70,10 @@ async function startServer() {
     });
 
     // API routes
-    app.use('/runs', createRunsRouter(config_, db, openaiService, discordService));
+    app.use('/runs', createRunsRouter(config_, db, broker));
+    
+    // SSE streaming endpoint
+    app.get('/runs/:id/events', streamRun);
 
     // MCP introspection (non-auth, dev only)
     app.get('/mcp/tools', (req, res) => {
@@ -94,10 +94,15 @@ async function startServer() {
       res.status(404).json({ error: 'Not found' });
     });
 
-    // Start server
-    app.listen(port, () => {
+    // Start server with SSE-friendly timeouts
+    const server = app.listen(port, () => {
       logger.info({ port }, 'Agent service started successfully');
     });
+    // Never time out active requests (SSE stays open)
+    (server as any).requestTimeout = 0;
+    // Generous header & keep-alive windows (not strictly required, but helpful)
+    (server as any).headersTimeout = 120_000;
+    (server as any).keepAliveTimeout = 75_000;
 
     // Graceful shutdown
     process.on('SIGTERM', () => {

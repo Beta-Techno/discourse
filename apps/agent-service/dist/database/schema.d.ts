@@ -122,7 +122,7 @@ export declare const runs: import("drizzle-orm/sqlite-core").SQLiteTableWithColu
             tableName: "runs";
             dataType: "string";
             columnType: "SQLiteText";
-            data: "running" | "ok" | "blocked" | "error";
+            data: "error" | "ok" | "running" | "blocked";
             driverParam: string;
             notNull: true;
             hasDefault: false;

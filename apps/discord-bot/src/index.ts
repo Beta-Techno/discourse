@@ -1,7 +1,8 @@
 import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { config } from 'dotenv';
-import { ConfigSchema, createLogger, CreateRunRequestSchema, CreateRunResponse } from '@discourse/core';
+import { ConfigSchema, createLogger, type AgentCreateRunRequest, type AgentCreateRunResponse } from '@discourse/core';
 import axios from 'axios';
+import { StreamingClient, RunEvent } from './streaming-client.js';
 
 // Load environment variables from project root
 config({ path: '../../.env' });
@@ -101,6 +102,12 @@ client.on('messageCreate', async (message) => {
     // Fire only when the bot is mentioned
     const mentioned = message.mentions.users.has(client.user.id);
     if (!mentioned) return;
+    
+    logger.info({ 
+      userId: message.author.id, 
+      channelId: message.channel.id, 
+      content: message.content 
+    }, 'Bot mentioned, processing request');
 
     // Strip bot mention(s) from the content
     const raw = message.content ?? '';
@@ -113,23 +120,32 @@ client.on('messageCreate', async (message) => {
     void message.channel.sendTyping();
     try { await message.react('🧠'); } catch {}
 
-    // Build run request - inline reply to the triggering message
-    const runRequest = {
+    // Build run request - new format
+    const runRequest: AgentCreateRunRequest = {
       prompt,
-      userId: message.author.id,
-      channelId: message.channel.id,
-      replyToMessageId: message.id,
-      replyMode: config_.REPLY_MODE, // 'inline' | 'thread' | 'auto'
+      profileId: 'default', // Use default profile for now
+      user: {
+        provider: 'discord' as const,
+        id: message.author.id,
+      },
+      context: {
+        channelId: message.channel.id,
+        replyToMessageId: message.id,
+      },
     };
 
-    // Validate shape (defense-in-depth)
-    CreateRunRequestSchema.parse(runRequest);
-
-    // Call agent to process; agent will post the response into the channel/reply
-    await axios.post<CreateRunResponse>(`${config_.API_BASE_URL}/runs`, runRequest, {
+    // Call agent to create run
+    logger.info({ runRequest }, 'Sending request to agent service');
+    const response = await axios.post<AgentCreateRunResponse>(`${config_.API_BASE_URL}/runs`, runRequest, {
       timeout: 30000,
       headers: { 'Content-Type': 'application/json' },
     });
+    logger.info({ runId: response.data.id }, 'Received run ID from agent service');
+
+    const { id: runId } = response.data;
+
+    // Start streaming the response
+    await handleStreamingResponse(runId, message);
 
     try { await message.react('✅'); } catch {}
   } catch (err) {
@@ -139,52 +155,181 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// Handle streaming response from agent
+async function handleStreamingResponse(runId: string, message: any) {
+  let currentMessage: any = null;
+  let messageBuffer = '';
+  let isProcessing = false;
+  let lastSentContent = '';
+
+  const streamingClient = new StreamingClient(
+    (event: RunEvent) => {
+      logger.info({ eventType: event.type, data: event.data }, 'Received SSE event');
+      switch (event.type) {
+        case 'plan':
+          // Optionally show plan
+          break;
+          
+        case 'tool_call':
+          // Show tool usage indicator
+          if (!isProcessing) {
+            isProcessing = true;
+            message.channel.sendTyping();
+          }
+          break;
+          
+        case 'token':
+          // Buffer tokens for real-time display (optional)
+          messageBuffer += event.data.text;
+          // Don't send individual tokens to avoid spam
+          break;
+          
+        case 'message':
+          // Send the complete final message
+          if (event.data.content) {
+            sendMessage(event.data.content);
+            // Clear the buffer since we've sent the complete message
+            messageBuffer = '';
+          }
+          break;
+          
+        case 'done':
+          // Flush any buffered tokens then clean up
+          sendChunk();
+          streamingClient.disconnect();
+          break;
+          
+        case 'error':
+          // Send error message
+          sendMessage(`❌ Error: ${event.data.message}`);
+          streamingClient.disconnect();
+          break;
+      }
+    },
+    (error: Error) => {
+      logger.error({ 
+        error: error.message, 
+        stack: error.stack, 
+        runId 
+      }, 'Streaming error');
+      sendMessage(`❌ Connection error: ${error.message}`);
+      streamingClient.disconnect();
+    }
+  );
+
+  function sendChunk() {
+    if (messageBuffer) {
+      sendMessage(messageBuffer);
+      messageBuffer = '';
+    }
+  }
+
+  function sendMessage(content: string) {
+    if (!content.trim()) return;
+    
+    // Skip if we've already sent this exact content
+    if (content === lastSentContent) {
+      logger.info({ content: content.substring(0, 50) + '...' }, 'Skipping duplicate message');
+      return;
+    }
+    
+    lastSentContent = content;
+    logger.info({ content: content.substring(0, 100) + '...', runId }, 'Sending message to Discord');
+
+    // Apply reply policy
+    const replyMode = config_.REPLY_MODE; // 'inline' | 'thread' | 'auto'
+    const autoThreshold = Number(config_.AUTO_THREAD_THRESHOLD ?? 1500);
+    
+    // Determine if we should create a thread
+    const shouldCreateThread = replyMode === 'thread' || 
+      (replyMode === 'auto' && content.length > autoThreshold);
+
+    // Split long messages
+    const chunks = splitMessage(content);
+    
+    chunks.forEach((chunk, index) => {
+      if (index === 0 && !currentMessage) {
+        // First chunk - apply reply policy
+        if (shouldCreateThread) {
+          // Create thread and post in thread
+          currentMessage = message.startThread({ 
+            name: `AI Response - ${new Date().toLocaleTimeString()}`,
+            autoArchiveDuration: 60 // 1 hour
+          }).then((thread: any) => thread.send(chunk));
+        } else {
+          // Inline reply
+          currentMessage = message.reply(chunk);
+        }
+      } else {
+        // Always send a new message; do not edit previously sent ones
+        message.channel.send(chunk);
+      }
+    });
+  }
+
+  function splitMessage(content: string, maxLength: number = 1900): string[] {
+    if (content.length <= maxLength) {
+      return [content];
+    }
+
+    const chunks: string[] = [];
+    let remaining = content;
+
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLength) {
+        chunks.push(remaining);
+        break;
+      }
+
+      // Find last newline before maxLength
+      let splitPoint = maxLength;
+      const lastNewline = remaining.lastIndexOf('\n', maxLength);
+      if (lastNewline > maxLength * 0.8) {
+        splitPoint = lastNewline;
+      }
+
+      chunks.push(remaining.substring(0, splitPoint));
+      remaining = remaining.substring(splitPoint);
+    }
+
+    return chunks;
+  }
+
+  // Start streaming
+  streamingClient.connect(runId, config_.API_BASE_URL);
+}
+
 async function handleAskCommand(interaction: any) {
   const prompt = interaction.options.getString('prompt', true);
-  const userId = interaction.user.id;
-  const channelId = interaction.channelId;
 
-  // Defer the reply immediately
   await interaction.deferReply({ ephemeral: true });
 
+  const runRequest: AgentCreateRunRequest = {
+    prompt,
+    profileId: 'default',
+    user: { provider: 'discord' as const, id: interaction.user.id },
+    context: { channelId: interaction.channelId }
+  };
+
   try {
-    // Create run request
-    const runRequest = CreateRunRequestSchema.parse({
-      prompt,
-      userId,
-      channelId,
+    const { data } = await axios.post<AgentCreateRunResponse>(`${config_.API_BASE_URL}/runs`, runRequest, {
+      timeout: 30000,
+      headers: { 'Content-Type': 'application/json' },
     });
 
-    // Call agent service
-    const response = await axios.post<CreateRunResponse>(
-      `${config_.API_BASE_URL}/runs`,
-      runRequest,
-      {
-        timeout: 30000, // 30 second timeout
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const runId = data.id as string;
+    await interaction.editReply(`✅ Started run \`${runId}\`. I'll post the answer in this channel.`);
 
-    const { id: runId, threadId, message } = response.data;
+    // Stream to the same channel as the slash command
+    const messageLike = {
+      channel: interaction.channel,
+      reply: (content: string) => interaction.followUp({ content, ephemeral: false }),
+    };
 
-    // Update the deferred reply with success message
-    // In inline mode there's no thread; we link back to the channel instead
-    const target = config_.REPLY_MODE === 'thread' ? `<#${threadId}>` : `<#${channelId}>`;
-    await interaction.editReply(`✅ Run ${runId} complete → ${target}`);
-
-    logger.info({
-      runId,
-      userId,
-      channelId,
-      threadId,
-      promptLength: prompt.length,
-    }, 'Ask command completed successfully');
+    await handleStreamingResponse(runId, messageLike as any);
 
   } catch (error) {
-    logger.error({ userId, channelId, prompt: prompt.substring(0, 100) }, 'Error in ask command:', error);
-    console.error('Full ask command error details:', error);
+    logger.error({ userId: interaction.user.id, channelId: interaction.channelId, prompt: prompt.substring(0, 100) }, 'Error in ask command:', error);
     
     let errorMessage = 'Sorry, I encountered an error processing your request.';
     

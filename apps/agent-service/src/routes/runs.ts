@@ -1,18 +1,19 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { eq } from 'drizzle-orm';
-import { CreateRunRequestSchema, CreateRunResponse, createLogger } from '@discourse/core';
+import { createLogger, type AgentCreateRunRequest, type AgentCreateRunResponse } from '@discourse/core';
 import { Database } from '../database/connection.js';
 import { runs } from '../database/schema.js';
-import { OpenAIService } from '../services/openai-service.js';
-import { DiscordService } from '../services/discord-service.js';
 import { Config } from '@discourse/core';
+import { emitRunEvent } from '../api/streams.js';
+import { getProfile } from '../profiles/index.js';
+import { OpenAIAdapter } from '../adapters/OpenAIAdapter.js';
+import type { McpBroker } from '../mcp/broker.js';
 
 export function createRunsRouter(
   config: Config,
   db: Database,
-  openaiService: OpenAIService,
-  discordService: DiscordService
+  mcpBroker: McpBroker
 ): Router {
   const router = Router();
   const logger = createLogger(config);
@@ -24,16 +25,23 @@ export function createRunsRouter(
   router.post('/', async (req, res) => {
     const runId = uuidv4();
     const startTime = Date.now();
-    const defaultMode = config.REPLY_MODE; // 'inline' | 'thread' | 'auto'
-    const autoThreshold = config.AUTO_THREAD_THRESHOLD;
     
     try {
       // Validate request
-      const requestData = CreateRunRequestSchema.parse(req.body);
-      const { prompt, userId, channelId, threadId, replyToMessageId, replyMode } = requestData;
+      const requestData = req.body as AgentCreateRunRequest;
+      const { prompt, profileId, user, context } = requestData;
 
-      // Create deduplication key
-      const dedupKey = `${userId}:${channelId}:${replyToMessageId || 'none'}:${prompt.slice(0, 100)}`;
+      // Get profile configuration
+      const profile = getProfile(profileId);
+      
+      // Create deduplication key (include context to prevent cross-channel conflicts)
+      const dedupKey = [
+        user.id,
+        user.provider,
+        context?.replyToMessageId ?? 'noMessage',
+        context?.channelId ?? 'noChannel',
+        prompt.slice(0, 100)
+      ].join(':');
       const now = Date.now();
       
       // Check for duplicate request
@@ -42,8 +50,7 @@ export function createRunsRouter(
         logger.info({ runId, existingRunId: existing.runId, dedupKey }, 'Duplicate request detected, returning existing run');
         return res.json({
           id: existing.runId,
-          threadId: channelId, // Return channel ID for compatibility
-          message: 'Request already being processed'
+          status: 'created'
         });
       }
       
@@ -57,13 +64,13 @@ export function createRunsRouter(
         }
       }
 
-      logger.info({ runId, userId, channelId, promptLength: prompt.length }, 'Processing run request');
+      logger.info({ runId, userId: user.id, provider: user.provider, profileId, promptLength: prompt.length }, 'Processing run request');
 
       // Create run record in database
       const runRecord = await db.insert(runs).values({
-        discord_id: userId,
-        channel_id: channelId,
-        thread_id: threadId || null,
+        discord_id: user.id,
+        channel_id: context?.channelId || null,
+        thread_id: context?.threadId || null,
         prompt,
         tools_used: null,
         status: 'running',
@@ -71,91 +78,17 @@ export function createRunsRouter(
         latency_ms: null,
       });
 
-      let finalThreadId = threadId ?? null;
-      let finalMessage = '';
+      // Return immediately with run ID - processing happens asynchronously
+      const response: AgentCreateRunResponse = {
+        id: runId,
+        status: 'created',
+        eventsUrl: `/runs/${runId}/events`
+      };
+      res.json(response);
 
-      try {
-        // Process with OpenAI
-        const result = await openaiService.processRequest(prompt, runId);
-        finalMessage = result.message;
-        const toolsUsed = result.toolsUsed ?? [];
-
-        // Decide how to deliver (inline vs thread)
-        const mode = replyMode ?? defaultMode;
-        const shouldThread =
-          mode === 'thread' ||
-          (mode === 'auto' && (finalMessage.length > autoThreshold || toolsUsed.length > 0));
-
-        if (shouldThread) {
-          const threadName = `AI Response - ${new Date().toLocaleDateString()}`;
-          finalThreadId = await discordService.createThread(channelId, threadName, finalMessage);
-        } else {
-          await discordService.sendReply(channelId, replyToMessageId ?? null, finalMessage);
-          // For compatibility with existing bot UI, return base channel id
-          finalThreadId = channelId;
-        }
-
-        // Update run record with success
-        const latency = Date.now() - startTime;
-        await db.update(runs)
-          .set({
-            thread_id: finalThreadId,
-            tools_used: toolsUsed,
-            status: 'ok',
-            latency_ms: latency,
-          })
-          .where(eq(runs.id, Number(runRecord.lastInsertRowid)));
-
-        logger.info({ runId, latency, toolsUsed }, 'Run completed successfully');
-
-        // Clean up deduplication cache
-        requestCache.delete(dedupKey);
-
-        const response: CreateRunResponse = {
-          id: runId,
-          threadId: finalThreadId,
-          message: finalMessage,
-        };
-
-        res.json(response);
-
-      } catch (processingError) {
-        // Update run record with error
-        const latency = Date.now() - startTime;
-        const errorMessage = processingError instanceof Error ? processingError.message : 'Unknown error';
-        
-        await db.update(runs)
-          .set({
-            status: 'error',
-            error: errorMessage,
-            latency_ms: latency,
-          })
-          .where(eq(runs.id, Number(runRecord.lastInsertRowid)));
-
-        logger.error({ runId, latency, error: processingError }, 'Run processing failed');
-
-        // Clean up deduplication cache
-        requestCache.delete(dedupKey);
-
-        // Send error message to Discord
-        const errorResponse = `❌ I encountered an error processing your request: ${errorMessage}`;
-        const mode = replyMode ?? defaultMode;
-        if (mode === 'thread' || (!replyToMessageId && mode !== 'inline')) {
-          const threadName = `AI Error - ${new Date().toLocaleDateString()}`;
-          finalThreadId = await discordService.createThread(channelId, threadName, errorResponse);
-        } else {
-          await discordService.sendReply(channelId, replyToMessageId ?? null, errorResponse);
-          finalThreadId = channelId;
-        }
-
-        const response: CreateRunResponse = {
-          id: runId,
-          threadId: finalThreadId,
-          message: errorResponse,
-        };
-
-        res.status(500).json(response);
-      }
+      // Start async processing
+      processRunAsync(runId, prompt, profile, user, context, startTime, runRecord.lastInsertRowid, dedupKey);
+      return;
 
     } catch (error) {
       const latency = Date.now() - startTime;
@@ -163,28 +96,106 @@ export function createRunsRouter(
 
       // Clean up deduplication cache on any error
       try {
-        const requestData = CreateRunRequestSchema.parse(req.body);
-        const { userId, channelId, replyToMessageId, prompt } = requestData;
-        const dedupKey = `${userId}:${channelId}:${replyToMessageId || 'none'}:${prompt.slice(0, 100)}`;
+        const requestData = req.body as AgentCreateRunRequest;
+        const { user, prompt, context } = requestData;
+        const dedupKey = [
+          user.id,
+          user.provider,
+          context?.replyToMessageId ?? 'noMessage',
+          context?.channelId ?? 'noChannel',
+          prompt.slice(0, 100)
+        ].join(':');
         requestCache.delete(dedupKey);
       } catch {
         // Ignore cleanup errors
-      }
-
-      if (error instanceof Error && error.name === 'ZodError') {
-        res.status(400).json({
-          error: 'Invalid request data',
-          details: error.message,
-        });
-        return;
       }
 
       res.status(500).json({
         error: 'Internal server error',
         message: error instanceof Error ? error.message : 'Unknown error',
       });
+      return;
     }
   });
+
+  // Async processing function
+  async function processRunAsync(
+    runId: string,
+    prompt: string,
+    profile: any,
+    user: any,
+    context: any,
+    startTime: number,
+    runRecordId: any,
+    dedupKey: string
+  ) {
+    try {
+      // Emit plan event
+      emitRunEvent(runId, 'plan', { 
+        steps: ['Analyzing request', 'Calling tools', 'Generating response'],
+        profile: profile.id 
+      });
+
+      // Create model adapter based on profile
+          const modelAdapter = new OpenAIAdapter(config.OPENAI_API_KEY, mcpBroker);
+
+      // Process with the model adapter
+      const result = await modelAdapter.chat({
+        messages: [
+          {
+            role: 'system',
+            content: profile.systemPrompt || 'You are Discourse AI, a channel-agnostic company assistant. You plan, call tools via MCP, and stream intermediate results as events. Be concise, cite tools used when relevant, and respect policy/budgets.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        tools: mcpBroker.getOpenAIFunctionTools(profile.toolAllowlist ?? ['*']),
+        onEvent: (ev) => {
+          emitRunEvent(runId, ev.type, ev.data);
+        },
+        temperature: profile.temperature,
+        maxSteps: profile.maxSteps
+      });
+
+      // Update run record with success
+      const latency = Date.now() - startTime;
+      await db.update(runs)
+        .set({
+          tools_used: [], // TODO: Extract from events
+          status: 'ok',
+          latency_ms: latency,
+        })
+        .where(eq(runs.id, Number(runRecordId)));
+
+      logger.info({ runId, latency }, 'Run completed successfully');
+
+      // Clean up deduplication cache
+      requestCache.delete(dedupKey);
+
+    } catch (processingError) {
+      // Update run record with error
+      const latency = Date.now() - startTime;
+      const errorMessage = processingError instanceof Error ? processingError.message : 'Unknown error';
+      
+      await db.update(runs)
+        .set({
+          status: 'error',
+          error: errorMessage,
+          latency_ms: latency,
+        })
+        .where(eq(runs.id, Number(runRecordId)));
+
+      logger.error({ runId, latency, error: processingError }, 'Run processing failed');
+
+      // Emit error event
+      emitRunEvent(runId, 'error', { message: errorMessage });
+
+      // Clean up deduplication cache
+      requestCache.delete(dedupKey);
+    }
+  }
 
   return router;
 }

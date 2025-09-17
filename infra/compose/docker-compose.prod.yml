@@ -60,6 +60,7 @@ services:
       ALLOWED_TOOLS: ${ALLOWED_TOOLS}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS}
       MAX_HTTP_BYTES: ${MAX_HTTP_BYTES}
+      POSTGRES_URI: ${POSTGRES_URI}
     depends_on:
       mysql:
         condition: service_healthy

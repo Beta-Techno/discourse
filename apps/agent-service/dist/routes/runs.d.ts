@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { Database } from '../database/connection.js';
-import { OpenAIService } from '../services/openai-service.js';
-import { DiscordService } from '../services/discord-service.js';
 import { Config } from '@discourse/core';
-export declare function createRunsRouter(config: Config, db: Database, openaiService: OpenAIService, discordService: DiscordService): Router;
+import type { McpBroker } from '../mcp/broker.js';
+export declare function createRunsRouter(config: Config, db: Database, mcpBroker: McpBroker): Router;
 //# sourceMappingURL=runs.d.ts.map
