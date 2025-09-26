@@ -40,7 +40,7 @@
     "name": "google-workspace",
     "transport": "stdio",
     "command": "uvx",
-    "args": ["workspace-mcp==1.4.7", "--tools", "gmail", "drive", "sheets", "--single-user"],
+    "args": ["workspace-mcp==1.4.7", "--tools", "gmail", "drive", "sheets",  "--single-user"],
     "env": {
       "GOOGLE_OAUTH_CLIENT_ID": "${GDRIVE_CLIENT_ID}",
       "GOOGLE_OAUTH_CLIENT_SECRET": "${GDRIVE_CLIENT_SECRET}",
