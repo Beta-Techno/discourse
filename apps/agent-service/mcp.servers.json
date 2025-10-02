@@ -50,5 +50,15 @@
       "WORKSPACE_MCP_PORT": "7082",
       "OAUTHLIB_INSECURE_TRANSPORT": "1"
     }
+  },
+  {
+    "name": "netbox",
+    "transport": "stdio",
+    "command": "netbox-mcp",
+    "args": [],
+    "env": {
+      "NETBOX_URL": "${NETBOX_URL}",
+      "NETBOX_TOKEN": "${NETBOX_TOKEN}"
+    }
   }
 ]
