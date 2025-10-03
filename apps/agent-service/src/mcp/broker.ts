@@ -153,15 +153,35 @@ export class McpBroker {
       this.logger.info({ tool, args, originalArgsJson: argsJson }, 'Executing fetch tool');
     }
 
-    const res = await client.callTool({ name: tool, arguments: args });
+    // Debug logging for Twilio tools
+    if (server === 'twilio') {
+      this.logger.info({ tool, args, originalArgsJson: argsJson }, 'Executing Twilio tool');
+    }
+
+    // Add timeout for Twilio tools (they can be slow)
+    const timeoutMs = server === 'twilio' ? 30000 : 10000; // 30s for Twilio, 10s for others
+    
+    let res;
+    try {
+      res = await Promise.race([
+        client.callTool({ name: tool, arguments: args }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error(`Tool call timeout after ${timeoutMs}ms`)), timeoutMs)
+        )
+      ]);
+    } catch (error) {
+      this.logger.error({ tool, server, error: error instanceof Error ? error.message : String(error) }, 'Tool call failed');
+      throw error;
+    }
 
     // Debug logging for Gmail tool responses
     if (server === 'gmail') {
       this.logger.info({ tool, responseSize: JSON.stringify(res).length }, 'Gmail tool response received');
-      if (res?.content && Array.isArray(res.content)) {
-        this.logger.info({ tool, contentTypes: res.content.map(c => c.type), contentLengths: res.content.map(c => c.text?.length || 0) }, 'Gmail content details');
+      if (res && typeof res === 'object' && 'content' in res && Array.isArray((res as any).content)) {
+        const content = (res as any).content;
+        this.logger.info({ tool, contentTypes: content.map((c: any) => c.type), contentLengths: content.map((c: any) => c.text?.length || 0) }, 'Gmail content details');
         // Log first 200 characters of text content for debugging
-        const textContent = res.content.find(c => c.type === 'text')?.text;
+        const textContent = content.find((c: any) => c.type === 'text')?.text;
         if (textContent) {
           this.logger.info({ tool, preview: textContent.substring(0, 200) }, 'Gmail content preview');
         }
@@ -171,10 +191,11 @@ export class McpBroker {
     // Debug logging for PyMuPDF4LLM tool responses
     if (server === 'pymupdf4llm') {
       this.logger.info({ tool, responseSize: JSON.stringify(res).length }, 'PyMuPDF4LLM tool response received');
-      if (res?.content && Array.isArray(res.content)) {
-        this.logger.info({ tool, contentTypes: res.content.map(c => c.type), contentLengths: res.content.map(c => c.text?.length || 0) }, 'PyMuPDF4LLM content details');
+      if (res && typeof res === 'object' && 'content' in res && Array.isArray((res as any).content)) {
+        const content = (res as any).content;
+        this.logger.info({ tool, contentTypes: content.map((c: any) => c.type), contentLengths: content.map((c: any) => c.text?.length || 0) }, 'PyMuPDF4LLM content details');
         // Log first 500 characters of text content for debugging
-        const textContent = res.content.find(c => c.type === 'text')?.text;
+        const textContent = content.find((c: any) => c.type === 'text')?.text;
         if (textContent) {
           this.logger.info({ tool, preview: textContent.substring(0, 500) }, 'PyMuPDF4LLM content preview');
         }
@@ -184,12 +205,27 @@ export class McpBroker {
     // Debug logging for filesystem tool responses
     if (server === 'filesystem') {
       this.logger.info({ tool, responseSize: JSON.stringify(res).length }, 'Filesystem tool response received');
-      if (res?.content && Array.isArray(res.content)) {
-        this.logger.info({ tool, contentTypes: res.content.map(c => c.type), contentLengths: res.content.map(c => c.text?.length || 0) }, 'Filesystem content details');
+      if (res && typeof res === 'object' && 'content' in res && Array.isArray((res as any).content)) {
+        const content = (res as any).content;
+        this.logger.info({ tool, contentTypes: content.map((c: any) => c.type), contentLengths: content.map((c: any) => c.text?.length || 0) }, 'Filesystem content details');
         // Log first 500 characters of text content for debugging
-        const textContent = res.content.find(c => c.type === 'text')?.text;
+        const textContent = content.find((c: any) => c.type === 'text')?.text;
         if (textContent) {
           this.logger.info({ tool, preview: textContent.substring(0, 500) }, 'Filesystem content preview');
+        }
+      }
+    }
+
+    // Debug logging for Twilio tool responses
+    if (server === 'twilio') {
+      this.logger.info({ tool, responseSize: JSON.stringify(res).length, isError: res && typeof res === 'object' && 'isError' in res ? (res as any).isError : false }, 'Twilio tool response received');
+      if (res && typeof res === 'object' && 'content' in res && Array.isArray((res as any).content)) {
+        const content = (res as any).content;
+        this.logger.info({ tool, contentTypes: content.map((c: any) => c.type), contentLengths: content.map((c: any) => c.text?.length || 0) }, 'Twilio content details');
+        // Log first 500 characters of text content for debugging
+        const textContent = content.find((c: any) => c.type === 'text')?.text;
+        if (textContent) {
+          this.logger.info({ tool, preview: textContent.substring(0, 500) }, 'Twilio content preview');
         }
       }
     }
@@ -197,8 +233,8 @@ export class McpBroker {
     // Normalize content to something we can JSON.stringify
     // SDK typically returns { content: [{ type: 'text', text: '...' }, ...] }
     const safe = {
-      content: res?.content ?? null,
-      isError: res?.isError ?? false
+      content: res && typeof res === 'object' && 'content' in res ? (res as any).content : null,
+      isError: res && typeof res === 'object' && 'isError' in res ? (res as any).isError : false
     };
     return safe;
   }
@@ -360,7 +396,7 @@ export class McpBroker {
     // Re-join any remaining underscores for tool name
     // Convert underscores back to hyphens for server name lookup
     const server = parts[1]!.replace(/_/g, '-');
-    const tool = parts.slice(2).join('__');
+    const tool = parts.slice(2).join('--');
     return { server, tool };
   }
 }

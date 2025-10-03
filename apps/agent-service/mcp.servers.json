@@ -60,5 +60,17 @@
       "NETBOX_URL": "${NETBOX_URL}",
       "NETBOX_TOKEN": "${NETBOX_TOKEN}"
     }
+  },
+  {
+    "name": "twilio",
+    "transport": "stdio",
+    "command": "/Users/damicorobot/.nvm/versions/node/v20.19.0/bin/npx",
+    "args": [
+      "-y",
+      "@twilio-alpha/mcp",
+      "${TWILIO_ACCOUNT_SID}/${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}",
+      "--services", "twilio_messaging_v1,twilio_api_v2010",
+      "--tags", "Api20100401IncomingPhoneNumber,Api20100401Message"
+    ]
   }
 ]
